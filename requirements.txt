@@ -1,0 +1,16 @@
+streamlit
+pandas
+numpy
+plotly
+firebase-admin
+prophet
+matplotlib
+openpyxl
+xlrd
+python-dateutil
+pytz
+requests
+Pillow
+pytesseract
+forex-python
+pdfkit
