@@ -51,22 +51,39 @@ def export_csv(df):
         mime='text/csv',
     )
 
-def export_pdf(df):
-    html = df.to_html(classes='table table-striped')
-    
-    # Vérifie si wkhtmltopdf est disponible (simplifié)
+# Dans utils.py
+
+
+
+# utils.py
+
+import pdfkit # Assurez-vous que pdfkit est importé
+# ... autres imports ...
+
+# =======================================================
+# 1. DÉFINITION GLOBALE DE LA CONFIGURATION (CORRECTION)
+# =======================================================
+# Spécifiez le chemin d'accès à l'exécutable wkhtmltopdf.exe 
+# (Ceci est nécessaire si la modification du PATH système ne fonctionne pas)
+path_wkhtmltopdf = r'C:\Program Files (x86)\wkhtmltopdf\bin\wkhtmltopdf.exe'
+config = pdfkit.configuration(wkhtmltopdf=path_wkhtmltopdf)
+
+def export_csv(df):
+    # ... votre code pour l'export CSV
+    pass
+
+def export_pdf(html_content, filename):
     try:
-        # Création d'un fichier temporaire en mémoire pour le PDF
-        pdf = pdfkit.from_string(html, False) 
+        # 2. Utilisation de la variable 'config' définie globalement
+        pdfkit.from_string(html_content, filename, configuration=config) 
         
-        st.download_button(
-            label="Télécharger en PDF",
-            data=pdf,
-            file_name='export_budget.pdf',
-            mime='application/octet-stream'
-        )
-    except OSError as e:
-        st.error("Erreur PDF : Assurez-vous que wkhtmltopdf est installé et accessible dans le PATH.")
-        st.code(f"Détail de l'erreur: {e}")
+        # Le reste de la fonction
+        with open(filename, "rb") as pdf_file:
+            # ... votre code Streamlit pour le bouton de téléchargement
+            pass
+            
+        return "PDF generated successfully"
+
     except Exception as e:
-        st.error(f"Erreur lors de la génération PDF : {e}")
+        # ...
+        return f"Erreur PDF: {e}"

@@ -56,23 +56,21 @@ def plot_profit_margin(df):
     ))
     
     fig.update_layout(
-        title="💰 Profit et Marge (Tendance Journalière)", 
-        xaxis_title="Date",
-        # Configuration de l'axe primaire (Profit)
-        yaxis=dict(
-            title='Profit (€)',
-            titlefont=dict(color="blue"),
-            tickfont=dict(color="blue")
+    # ... autres arguments de layout ...
+    yaxis=dict(
+        title=dict( # Utilisez 'title' comme un dictionnaire
+            text='Votre Titre d\'Axe Y', # Optionnel : définir le texte ici ou dans l'argument de niveau supérieur
+            font=dict(
+                size=16,
+                color='black',
+                family='Arial'
+            ) # Définissez la police DANS 'title'
         ),
-        # Configuration de l'axe secondaire (Marge)
-        yaxis2=dict(
-            title='Marge (%)',
-            titlefont=dict(color="orange"),
-            tickfont=dict(color="orange"),
-            overlaying='y', 
-            side='right',
-            range=[0, 100] # Marge typiquement entre 0 et 100%
-        ),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+        # Si vous voulez styliser les étiquettes des graduations (les nombres/dates)
+        tickfont=dict(
+            size=12, 
+            color='grey'
+        )
     )
+)
     return fig

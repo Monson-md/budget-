@@ -1,44 +1,30 @@
-import firebase_admin
-from firebase_admin import credentials, firestore
-from datetime import datetime
-import streamlit as st
+# db_client.py (Assurez-vous que cette classe contient les fonctions suivantes)
+
+# ... (votre code d'initialisation de Firebase)
 
 class DBClient:
-    def __init__(self, firebase_key_path="firebase_key.json"):
-        try:
-            # Assurez-vous que l'application n'est initialisée qu'une seule fois
-            cred = credentials.Certificate(firebase_key_path)
-            if not firebase_admin._apps:
-                firebase_admin.initialize_app(cred)
-            self.db = firestore.client()
-        except Exception as e:
-            st.error(f"Erreur Firebase : Vérifiez votre fichier 'firebase_key.json'. Détail: {e}")
-            self.db = None
+    def __init__(self):
+        # ... (votre code d'initialisation de Firebase Admin SDK)
+        self.db = firestore.client() # L'instance de la base de données
 
-    def add_entry(self, collection, entry):
-        if not self.db: return False
-        # Ajoute l'horodatage de création
-        entry['timestamp'] = datetime.now()
-        self.db.collection(collection).add(entry)
+    # --- NOUVELLE FONCTION 1 : Récupérer un utilisateur ---
+    def get_user(self, email):
+        """Récupère les données d'un utilisateur par son email (ID du document)."""
+        # Chemin de la collection : /artifacts/{appId}/users/{userId}/users
+        # Pour les utilisateurs, nous utilisons l'email comme ID pour la collection 'users'
+        # Assurez-vous d'avoir une collection 'users' au bon emplacement. 
+        # Si vous utilisez un chemin spécifique pour les utilisateurs, ajustez ici.
+        doc_ref = self.db.collection('users').document(email) 
+        doc = doc_ref.get()
+        if doc.exists:
+            return doc.to_dict()
+        return None
+
+    # --- NOUVELLE FONCTION 2 : Sauvegarder/Créer un utilisateur ---
+    def save_user(self, email, user_data):
+        """Sauvegarde les données de l'utilisateur (crée ou met à jour)."""
+        doc_ref = self.db.collection('users').document(email)
+        doc_ref.set(user_data)
         return True
 
-    def get_entries(self, collection):
-        if not self.db: return []
-        # Récupère et ordonne par date
-        docs = self.db.collection(collection).order_by("timestamp").stream()
-        data = []
-        for doc in docs:
-            d = doc.to_dict()
-            d['id'] = doc.id
-            data.append(d)
-        return data
-
-    def update_entry(self, collection, doc_id, new_entry):
-        if not self.db: return False
-        self.db.collection(collection).document(doc_id).update(new_entry)
-        return True
-
-    def delete_entry(self, collection, doc_id):
-        if not self.db: return False
-        self.db.collection(collection).document(doc_id).delete()
-        return True
+    # ... (vos fonctions existantes : add_entry, get_entries, etc.)

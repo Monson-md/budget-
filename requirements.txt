@@ -3,6 +3,7 @@ pandas
 numpy
 plotly
 firebase-admin
+passlib
 prophet
 matplotlib
 openpyxl
