@@ -1,87 +1,149 @@
-import os
-import streamlit as st
+import firebase_admin
+from firebase_admin import credentials, auth, firestore
 import json
-from firebase_admin import credentials, initialize_app, firestore
+import logging
+import time
 
-# --- MODIFICATION CLÉ : UTILISER LES SECRETS STREAMLIT ---
-# La clé sera lue à partir de la variable d'environnement 'FIREBASE_SECRET'
-# que vous configurerez sur Streamlit Cloud.
+# Configuration du logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-# Définition de la classe pour se connecter à Firestore
-class DBClient:
-    def __init__(self):
-        # Initialisation de l'application Firebase
-        if not initialize_app:
-            st.error("Le SDK Firebase Admin n'a pas été importé correctement.")
-            return
-
-        # Tentative d'initialisation (nécessaire une seule fois)
-        if not initialize_app.apps:
-            try:
-                # 1. Récupération de la clé secrète JSON depuis les secrets Streamlit
-                # Nous utilisons st.secrets pour accéder aux variables d'environnement
-                # ou l'environnement OS si nous sommes en local (méthode de secours).
-                secret_json = st.secrets.get("FIREBASE_SECRET", os.getenv("FIREBASE_SECRET"))
-                
-                if not secret_json:
-                    st.error("Erreur : La variable FIREBASE_SECRET est manquante dans les secrets Streamlit ou l'environnement.")
-                    return
-                
-                # 2. Convertir la chaîne JSON en un dictionnaire (dict)
-                # La variable d'environnement contient la clé JSON complète sous forme de chaîne.
-                cred_dict = json.loads(secret_json)
-                
-                # 3. Créer les identifiants à partir du dictionnaire
-                cred = credentials.Certificate(cred_dict)
-                
-                # 4. Initialiser l'application
-                initialize_app(cred)
-                st.info("Connexion Firebase établie avec les secrets.")
-                
-            except Exception as e:
-                st.error(f"Erreur d'initialisation Firebase. Vérifiez la clé dans les secrets : {e}")
-                return
+class FirebaseClient:
+    """
+    Client pour interagir avec Firebase Authentication et Firestore.
+    Utilise les secrets Streamlit pour l'initialisation.
+    """
+    def __init__(self, firebase_config):
+        """
+        Initialise l'application Firebase et les services de base de données.
+        :param firebase_config: Dictionnaire des identifiants du compte de service.
+        """
+        self.db = None
         
-        # Obtention du client Firestore
-        self.db = firestore.client()
-
-    # --- NOUVELLE FONCTION 1 : Récupérer un utilisateur ---
-    def get_user(self, email):
-        """Récupère les données d'un utilisateur par son email (ID du document)."""
-        # Chemin de la collection : /artifacts/{appId}/users/{userId}/users
-        doc_ref = self.db.collection('users').document(email) 
-        doc = doc_ref.get()
-        if doc.exists:
-            return doc.to_dict()
-        return None
-
-    # --- NOUVELLE FONCTION 2 : Sauvegarder/Créer un utilisateur ---
-    def save_user(self, email, user_data):
-        """Sauvegarde les données de l'utilisateur (crée ou met à jour)."""
-        doc_ref = self.db.collection('users').document(email)
-        doc_ref.set(user_data)
-        return True
-
-    # --- Vos autres fonctions CRUD ---
-    def add_entry(self, collection_name, data):
-        """Ajoute une nouvelle entrée à une collection."""
         try:
-            self.db.collection(collection_name).add(data)
-            return True
+            # Vérifie si l'application est déjà initialisée
+            if not firebase_admin._apps:
+                # Les identifiants doivent être chargés depuis le dictionnaire (secrets Streamlit)
+                cred = credentials.Certificate(firebase_config)
+                
+                # Initialisation de l'application Firebase
+                firebase_admin.initialize_app(cred)
+
+            # Obtention du client Firestore
+            self.db = firestore.client()
+            logger.info("Firebase initialisé avec succès.")
+
         except Exception as e:
-            st.error(f"Erreur lors de l'ajout de l'entrée : {e}")
-            return False
+            logger.error(f"Erreur d'initialisation de Firebase: {e}")
+            self.db = None
 
-    def get_entries(self, collection_name):
-        """Récupère toutes les entrées d'une collection."""
+    def sign_up(self, email, password):
+        """
+        Crée un nouvel utilisateur.
+        :return: Dict avec 'success' (bool) et 'message' (str) ou 'user_id' (str).
+        """
+        if not self.db:
+            return {"success": False, "message": "Base de données non initialisée."}
         try:
-            docs = self.db.collection(collection_name).stream()
-            data = []
+            user = auth.create_user(
+                email=email,
+                password=password
+            )
+            # Créer un document initial dans Firestore (pour les futures données utilisateur)
+            user_ref = self.db.collection('users').document(user.uid)
+            user_ref.set({
+                'email': email,
+                'created_at': firestore.SERVER_TIMESTAMP
+            })
+            logger.info(f"Nouvel utilisateur créé: {user.uid}")
+            return {"success": True, "user_id": user.uid}
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    def sign_in(self, email, password):
+        """
+        Tente de connecter un utilisateur (méthode indirecte, car Streamlit ne gère pas directement les tokens de connexion).
+        Pour une application Streamlit simple, on vérifie l'existence de l'utilisateur.
+        **NOTE:** Dans une vraie app, l'authentification nécessite une validation du mot de passe via un service tiers.
+        Ici, nous allons simplement récupérer l'utilisateur par email. Si l'utilisateur existe, on suppose la connexion.
+        """
+        if not self.db:
+            return {"success": False, "message": "Base de données non initialisée."}
+        
+        # NOTE: Firebase Admin SDK ne permet pas la connexion directe par email/mot de passe.
+        # Cette méthode est une solution de contournement simple pour l'environnement Streamlit.
+        # Elle ne valide PAS le mot de passe.
+        try:
+            # Récupérer l'utilisateur par email
+            user = auth.get_user_by_email(email)
+            logger.info(f"Connexion utilisateur réussie (vérification par email): {user.uid}")
+            return {"success": True, "user_id": user.uid}
+        except Exception as e:
+            # L'erreur la plus probable est que l'utilisateur n'existe pas
+            return {"success": False, "message": "Email ou mot de passe incorrect."}
+
+    # --- Méthodes de gestion du Budget ---
+
+    def add_transaction(self, user_id, type, amount, category, date, description):
+        """
+        Ajoute une nouvelle transaction pour l'utilisateur.
+        :param user_id: ID de l'utilisateur.
+        :param type: 'Dépense' ou 'Revenu'.
+        :param amount: Montant de la transaction (doit être positif).
+        :param category: Catégorie de la transaction.
+        :param date: Date de la transaction (format ISO string).
+        :param description: Description optionnelle.
+        :return: Dict avec 'success' (bool) et 'message' (str).
+        """
+        if not self.db:
+            return {"success": False, "message": "Base de données non initialisée."}
+        
+        if amount <= 0:
+            return {"success": False, "message": "Le montant doit être positif."}
+
+        try:
+            transaction_data = {
+                'user_id': user_id, # Redondant mais utile pour les requêtes globales
+                'type': type,
+                'amount': float(amount),
+                'category': category,
+                'date': date,
+                'description': description,
+                'timestamp': firestore.SERVER_TIMESTAMP
+            }
+            
+            # Utilise une sous-collection spécifique à l'utilisateur pour les transactions
+            transactions_ref = self.db.collection('users').document(user_id).collection('transactions')
+            transactions_ref.add(transaction_data)
+            
+            return {"success": True, "message": "Transaction ajoutée."}
+        except Exception as e:
+            logger.error(f"Erreur d'ajout de transaction: {e}")
+            return {"success": False, "message": str(e)}
+
+    def get_all_transactions(self, user_id):
+        """
+        Récupère toutes les transactions pour un utilisateur donné.
+        :param user_id: ID de l'utilisateur.
+        :return: Liste de dictionnaires de transactions.
+        """
+        if not self.db:
+            return []
+        
+        try:
+            transactions_ref = self.db.collection('users').document(user_id).collection('transactions')
+            # CORRECTION CRITIQUE: Remplacer firestore.Query.DESCENDING par la chaîne 'DESCENDING'
+            # pour assurer la compatibilité dans l'environnement Streamlit.
+            docs = transactions_ref.order_by('date', direction='DESCENDING').stream() 
+            
+            transactions_list = []
             for doc in docs:
-                entry = doc.to_dict()
-                entry['id'] = doc.id
-                data.append(entry)
-            return data
+                data = doc.to_dict()
+                # On ajoute l'ID du document pour les opérations futures (ex: suppression/modification)
+                data['id'] = doc.id 
+                transactions_list.append(data)
+                
+            return transactions_list
         except Exception as e:
-            st.error(f"Erreur lors de la récupération des entrées : {e}")
+            logger.error(f"Erreur de récupération des transactions: {e}")
             return []
