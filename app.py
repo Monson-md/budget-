@@ -1,141 +1,236 @@
 import streamlit as st
-from db_client import DBClient
-from forms import entry_form
-from analysis import prepare_data, forecast_prophet
-from plots import plot_revenue_expense, plot_profit_margin
-from utils import export_csv, export_pdf, alert_expense
-from users import login, register, logout # <-- Importez register
+from db_client import FirebaseClient
+import json
+from datetime import datetime
 import pandas as pd
+import plotly.express as px
 
-# Configuration de la page Streamlit
-st.set_page_config(
-    page_title="Gestion Budgétaire Finale", 
-    layout="wide", 
-    initial_sidebar_state="expanded"
-)
+# Initialisation du client Firebase
+# Tente de récupérer les secrets. Si l'application tourne sur Streamlit Cloud,
+# les secrets sont lus depuis l'interface Streamlit.
+try:
+    if st.secrets.get("FIREBASE_SECRET"):
+        firebase_config = json.loads(st.secrets["FIREBASE_SECRET"])
+    else:
+        # Ceci est pour les tests locaux si vous n'avez pas de fichier .streamlit/secrets.toml
+        # Si vous testez en local, vous devrez peut-être adapter cette partie.
+        st.error("Le secret 'FIREBASE_SECRET' n'a pas été trouvé. Assurez-vous qu'il est configuré.")
+        firebase_config = None 
+except Exception as e:
+    st.error(f"Erreur de chargement des secrets Firebase: {e}")
+    firebase_config = None
 
-# --- INITIALISATION DE LA BASE DE DONNÉES ---
-# Utilise un singleton DBClient pour toute l'application
-if 'db' not in st.session_state:
-    st.session_state['db'] = DBClient()
-db = st.session_state['db'] # Récupère l'instance DB pour la passer aux fonctions
-
-# --- AUTHENTIFICATION GÉRÉE PAR SÉLECTION ---
-if 'user' not in st.session_state or 'role' not in st.session_state:
-    
-    st.title("🔐 Connexion et Inscription")
-    st.info("Veuillez vous connecter ou vous inscrire pour accéder au tableau de bord.")
-    
-    # 1. Option pour basculer entre les vues (sidebar)
-    choice = st.sidebar.radio("Navigation Authentification", ["Connexion", "S'inscrire"])
-    
-    if choice == "Connexion":
-        st.subheader("Connectez-vous à votre compte")
-        # Formulaire de Connexion
-        with st.form("login_form"):
-            login_email = st.text_input("Email de Connexion")
-            login_password = st.text_input("Mot de passe", type="password")
-            submit_login = st.form_submit_button("Connexion")
-            
-            if submit_login:
-                # Appelle login en lui passant le client DB
-                login(login_email, login_password, db) 
-        
-    elif choice == "S'inscrire":
-        st.subheader("Créez votre compte gratuitement")
-        # Formulaire d'Inscription
-        with st.form("register_form"):
-            register_email = st.text_input("Nouvel Email")
-            # Mot de passe sécurisé (Min 6 caractères est une bonne pratique)
-            register_password = st.text_input("Mot de passe (Min 6 caractères)", type="password")
-            submit_register = st.form_submit_button("S'inscrire")
-            
-            if submit_register:
-                if register_email and len(register_password) >= 6:
-                    # Appelle register en lui passant le client DB
-                    register(register_email, register_password, db)
-                elif not register_email or not register_password:
-                    st.warning("Veuillez remplir tous les champs.")
-                else:
-                    st.warning("Le mot de passe doit contenir au moins 6 caractères.")
-
-    st.stop() # Arrête l'exécution si non connecté
+if firebase_config:
+    db = FirebaseClient(firebase_config)
 else:
-    # --- Affichage du Tableau de Bord (Identique à votre code original) ---
-    st.sidebar.success(f"Connecté : {st.session_state['user']} (Rôle: {st.session_state['role']})")
-    logout() # Ajoute le bouton de déconnexion dans la sidebar
+    # Si la configuration a échoué, on utilise un client fictif pour éviter les erreurs de crash
+    class DummyClient:
+        def __init__(self):
+            st.warning("Client de base de données non initialisé en raison d'une erreur de configuration.")
+            self.user_data = {}
+        def sign_up(self, email, password): return {"success": False, "message": "DB non configurée."}
+        def sign_in(self, email, password): return {"success": False, "message": "DB non configurée."}
+        def get_all_transactions(self, user_id): return []
+        def add_transaction(self, user_id, type, amount, category, date, description): return {"success": False}
+    db = DummyClient()
 
-    # --- FORMULAIRE ET AJOUT D'ENTRÉE ---
-    entry = entry_form()
-    if entry:
-        # Ici, l'utilisateur est connu, vous devriez ajouter l'ID utilisateur à l'entrée
-        # Pour le moment, nous gardons votre code original
-        if db.add_entry("budget_entries", entry):
-            st.sidebar.success("Entrée ajoutée avec succès !")
+
+# --- Fonctions d'authentification ---
+
+def sign_up_form():
+    """Affiche le formulaire d'inscription."""
+    st.title("💸 Inscription")
+    email = st.text_input("Email", key="signup_email")
+    password = st.text_input("Mot de passe", type="password", key="signup_password")
+    if st.button("S'inscrire"):
+        if email and password:
+            result = db.sign_up(email, password)
+            if result["success"]:
+                st.success("Inscription réussie. Vous pouvez maintenant vous connecter.")
+            else:
+                st.error(f"Échec de l'inscription: {result['message']}")
+        else:
+            st.error("Veuillez remplir tous les champs.")
+
+def sign_in_form():
+    """Affiche le formulaire de connexion."""
+    st.title("🔑 Connexion")
+    email = st.text_input("Email", key="signin_email")
+    password = st.text_input("Mot de passe", type="password", key="signin_password")
+    if st.button("Se connecter"):
+        if email and password:
+            result = db.sign_in(email, password)
+            if result["success"]:
+                st.session_state["logged_in"] = True
+                st.session_state["user_id"] = result["user_id"]
+                st.session_state["user_email"] = email
+                st.rerun()
+            else:
+                st.error(f"Échec de la connexion: {result['message']}")
+        else:
+            st.error("Veuillez remplir tous les champs.")
+
+def sign_out():
+    """Déconnecte l'utilisateur et réinitialise la session."""
+    if "logged_in" in st.session_state:
+        del st.session_state["logged_in"]
+    if "user_id" in st.session_state:
+        del st.session_state["user_id"]
+    if "user_email" in st.session_state:
+        del st.session_state["user_email"]
+    st.success("Déconnexion réussie.")
+    st.rerun()
+
+# --- Fonctions du Tableau de Bord ---
+
+def add_transaction_form():
+    """Affiche le formulaire pour ajouter une nouvelle transaction."""
+    st.subheader("➕ Ajouter une nouvelle transaction")
+    
+    with st.form("transaction_form", clear_on_submit=True):
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            transaction_type = st.radio("Type", ["Dépense", "Revenu"], horizontal=True)
+            amount = st.number_input("Montant", min_value=0.01, format="%.2f")
+            date = st.date_input("Date", datetime.now().date())
+
+        with col2:
+            categories_depense = ["Nourriture", "Logement", "Transport", "Loisirs", "Santé", "Autres Dépenses"]
+            categories_revenu = ["Salaire", "Investissement", "Cadeau", "Autres Revenus"]
+            
+            if transaction_type == "Dépense":
+                category = st.selectbox("Catégorie", categories_depense)
+            else:
+                category = st.selectbox("Catégorie", categories_revenu)
+                
+            description = st.text_area("Description (optionnel)")
+            
+        submitted = st.form_submit_button("Enregistrer la transaction")
+
+        if submitted:
+            user_id = st.session_state["user_id"]
+            
+            # Correction: Assurez-vous que l'amount est positif avant l'enregistrement
+            # Le type est géré par la base de données pour la négativité.
+            
+            result = db.add_transaction(
+                user_id=user_id,
+                type=transaction_type,
+                amount=amount,
+                category=category,
+                date=date.isoformat(), # Sauvegarder la date au format string ISO
+                description=description
+            )
+            
+            if result["success"]:
+                st.success("Transaction enregistrée avec succès !")
+            else:
+                st.error(f"Erreur lors de l'enregistrement: {result['message']}")
+
+def display_dashboard():
+    """Affiche le tableau de bord principal de l'utilisateur."""
+    st.title(f"🏠 Tableau de Bord de Budget")
+    
+    user_id = st.session_state["user_id"]
+    st.sidebar.caption(f"Connecté en tant que : **{st.session_state['user_email']}**")
+    st.sidebar.button("Déconnexion", on_click=sign_out)
+
+    # 1. Chargement des données
+    transactions_list = db.get_all_transactions(user_id)
+    
+    if not transactions_list:
+        st.info("Aucune transaction enregistrée pour le moment. Ajoutez votre première transaction ci-dessous.")
+        add_transaction_form()
+        return
+
+    # 2. Préparation du DataFrame
+    df = pd.DataFrame(transactions_list)
+    df['date'] = pd.to_datetime(df['date'])
+    df['amount_signed'] = df.apply(
+        lambda row: -row['amount'] if row['type'] == 'Dépense' else row['amount'], 
+        axis=1
+    )
+    df = df.sort_values(by='date', ascending=False)
+    
+    # 3. Métriques clés (KIPs)
+    total_revenu = df[df['type'] == 'Revenu']['amount'].sum()
+    total_depense = df[df['type'] == 'Dépense']['amount'].sum()
+    solde = total_revenu - total_depense
+    
+    st.subheader("Résumé de la performance")
+    colA, colB, colC = st.columns(3)
+    
+    with colA:
+        st.metric("Total Revenu ⬆️", f"{total_revenu:,.2f} €", delta_color="off")
+    with colB:
+        st.metric("Total Dépense ⬇️", f"-{total_depense:,.2f} €", delta_color="off")
+    with colC:
+        solde_delta = "Aucun changement" if solde == 0 else f"{solde:,.2f} €"
+        st.metric("Solde Net ⚖️", f"{solde:,.2f} €", delta_color="off")
+        
+    st.markdown("---")
+    
+    # 4. Visualisation (Dépenses par Catégorie)
+    st.subheader("Analyse des Dépenses")
+    
+    depenses_df = df[df['type'] == 'Dépense'].groupby('category')['amount'].sum().reset_index()
+    if not depenses_df.empty:
+        fig = px.pie(
+            depenses_df, 
+            values='amount', 
+            names='category', 
+            title='Répartition des Dépenses par Catégorie',
+            hole=.3
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("Aucune dépense à analyser.")
+
+    st.markdown("---")
+    
+    # 5. Formulaire d'ajout (positionné ici pour la clarté)
+    add_transaction_form()
+
+    st.markdown("---")
+    
+    # 6. Tableau des transactions récentes
+    st.subheader("Historique des transactions")
+    # Affichage des transactions sans les IDs Firestore
+    display_df = df[['date', 'type', 'category', 'amount_signed', 'description']]
+    display_df.columns = ['Date', 'Type', 'Catégorie', 'Montant (€)', 'Description']
+    
+    st.dataframe(display_df, use_container_width=True)
+
+
+# --- Routage de l'Application ---
+
+def main():
+    st.set_page_config(page_title="Budget App", layout="wide", initial_sidebar_state="collapsed")
+    
+    # Initialisation de l'état de session si non défini
+    if "logged_in" not in st.session_state:
+        st.session_state["logged_in"] = False
+        st.session_state["user_id"] = None
+        st.session_state["page"] = "sign_in"
+
+    if st.session_state["logged_in"]:
+        display_dashboard()
+    else:
+        # Barre latérale pour changer de mode (Connexion/Inscription)
+        st.sidebar.title("Navigation")
+        if st.sidebar.button("Se connecter 🔑", disabled=(st.session_state["page"] == "sign_in")):
+            st.session_state["page"] = "sign_in"
+            st.rerun()
+        if st.sidebar.button("S'inscrire 💸", disabled=(st.session_state["page"] == "sign_up")):
+            st.session_state["page"] = "sign_up"
             st.rerun()
 
-    # --- PRÉPARATION DES DONNÉES ---
-    entries = db.get_entries("budget_entries")
-    df = prepare_data(entries)
+        # Affichage du formulaire de connexion ou d'inscription
+        if st.session_state["page"] == "sign_up":
+            sign_up_form()
+        else: # Default is sign_in
+            sign_in_form()
 
-    # --- TABLEAU DE BORD PRINCIPAL ---
-    st.header("✨ Tableau de Bord de Gestion Budgétaire")
-
-    if not df.empty:
-        
-        # 1. KPI (Key Performance Indicators)
-        st.subheader("📊 Indicateurs Clés de Performance (KPI)")
-        
-        col_profit, col_marge, col_forecast = st.columns(3)
-        
-        # Profit Total
-        with col_profit:
-            total_profit = df['profit'].sum()
-            st.metric("Profit Total", f"{total_profit:,.2f} €", delta=f"Base de {len(df)} entrées")
-
-        # Marge Moyenne
-        with col_marge:
-            avg_marge = df['marge'].mean()
-            st.metric("Marge Moyenne", f"{avg_marge:.2f} %")
-        
-        # Prévisions
-        with col_forecast:
-            forecast = forecast_prophet(df)
-            if forecast is not None:
-                st.metric("Prévision Profit Prochain Mois", f"{forecast:,.2f} €")
-            else:
-                st.info("Ajoutez plus de données pour la prévision.")
-
-        # 2. Graphiques
-        st.markdown("---")
-        st.subheader("📈 Visualisation des Tendances")
-        
-        st.plotly_chart(plot_revenue_expense(df), use_container_width=True)
-        st.plotly_chart(plot_profit_margin(df), use_container_width=True)
-
-        # 3. Alertes
-        alert_expense(df) 
-
-        # 4. Données brutes et OCR
-        st.markdown("---")
-        st.subheader("📑 Justificatifs et Données Brutes")
-
-        ocr_data = df[df['justificatif_ocr'] != ""]
-        if not ocr_data.empty:
-            st.markdown("**Texte extrait par l'OCR :**")
-            for idx, row in ocr_data.tail(5).iterrows(): 
-                st.code(f"[{idx.date()} - {row['category']}] : {row['justificatif_ocr']}", language="text")
-        
-        st.dataframe(df.style.format(precision=2), use_container_width=True)
-
-        # 5. Export
-        st.markdown("---")
-        st.subheader("📤 Options d'Export")
-        col_csv, col_pdf = st.columns(2)
-        with col_csv:
-            export_csv(df)
-        with col_pdf:
-            export_pdf(df)
-            
-    else:
-        st.info("Aucune donnée budgétaire n'est encore enregistrée. Utilisez le panneau latéral pour ajouter une première entrée.")
+if __name__ == "__main__":
+    main()
