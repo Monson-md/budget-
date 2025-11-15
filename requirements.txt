@@ -15,3 +15,7 @@ Pillow
 pytesseract
 forex-python
 pdfkit
+streamlit
+pandas
+plotly
+firebase-admin
