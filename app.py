@@ -1,43 +1,49 @@
 import streamlit as st
 import firebase_admin
 from firebase_admin import credentials, auth
-import json
+import json # Importation nécessaire pour lire la chaîne JSON
 
 # --- CONFIGURATION DE PAGE ---
 st.set_page_config(layout="centered", page_title="Budget App")
 
-# --- Initialisation de Firebase (MÉTHODE ROBUSTE PAR DÉFAUT) ---
+# --- Initialisation de Firebase (MÉTHODE ROBUSTE FIXÉE) ---
 
 def initialize_firebase():
     """
-    Initialise l'application Firebase en utilisant les secrets Streamlit 
-    au format TOML pour éviter les erreurs de caractères de contrôle.
+    Initialise l'application Firebase en utilisant la chaîne JSON complète
+    stockée sous FIREBASE_SECRET dans les secrets Streamlit.
     """
     if not firebase_admin._apps:
         try:
-            # 1. Vérifie si la section 'firebase' existe dans les secrets
-            if "firebase" not in st.secrets:
-                st.error("Erreur de configuration: La section '[firebase]' est manquante dans les secrets Streamlit.")
-                st.info("Veuillez vous assurer que votre fichier secrets.toml contient la section [firebase] et toutes les clés.")
+            # 1. Vérifie si la clé 'FIREBASE_SECRET' existe (Utilise le nom correct)
+            if "FIREBASE_SECRET" not in st.secrets:
+                st.error("Erreur de configuration: La clé 'FIREBASE_SECRET' est manquante dans les secrets Streamlit.")
+                st.info("Veuillez vous assurer que votre fichier secrets.toml contient la clé FIREBASE_SECRET avec la configuration JSON.")
                 st.stop()
                 
-            # 2. Récupère le dictionnaire de configuration Firebase
-            key_dict = dict(st.secrets["firebase"])
+            # 2. Récupère la CHAÎNE JSON
+            json_string = st.secrets["FIREBASE_SECRET"]
             
-            # Correction des sauts de ligne dans la clé privée (important pour Streamlit)
-            if 'private_key' in key_dict:
-                 # Remplace les '\n' littéraux par de vrais sauts de ligne
-                key_dict['private_key'] = key_dict['private_key'].replace('\\n', '\n')
+            # 3. Parse la CHAÎNE JSON en Dictionnaire Python (CRITIQUE pour le format triple-guillemets)
+            key_dict = json.loads(json_string)
             
-            # 3. Initialise l'application Firebase
+            # NOTE: La conversion des '\n' n'est plus nécessaire ici car json.loads le gère
+            # si la clé privée est correctement échappée dans la chaîne JSON.
+            
+            # 4. Initialise l'application Firebase avec le dictionnaire
             cred = credentials.Certificate(key_dict)
             firebase_admin.initialize_app(cred)
             st.success("Connexion Firebase établie avec succès!")
 
+        except json.JSONDecodeError as e:
+            # Gère les erreurs si la chaîne FIREBASE_SECRET n'est pas un JSON valide
+            st.error(f"Erreur de PARSING JSON: {e}")
+            st.info("Le contenu de FIREBASE_SECRET n'est pas un JSON valide. Veuillez vérifier la syntaxe (guillemets, virgules).")
+            st.stop()
         except Exception as e:
-            # Capture toutes les erreurs d'initialisation (y compris le "Invalid control character")
+            # Capture l'erreur "Invalid private key" si elle survient après le parsing
             st.error(f"Erreur CRITIQUE lors de l'initialisation de Firebase: {e}")
-            st.info("La clé privée dans les secrets contient peut-être un caractère illégal (par exemple, un saut de ligne non échappé).")
+            st.info("Le contenu JSON est peut-être correct, mais la clé privée elle-même est mal formée. Confirmez que le fichier JSON téléchargé depuis Firebase est complet.")
             st.stop()
 
 # Lance l'initialisation au démarrage
