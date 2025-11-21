@@ -1,8 +1,11 @@
 import pandas as pd
+import streamlit as st # <<< AJOUT CRITIQUE
+
 # Nécessite prophet dans requirements.txt
 try:
     from prophet import Prophet 
 except ImportError:
+    # L'utilisation de st.warning nécessite que Streamlit soit importé
     st.warning("La librairie Prophet n'est pas installée. Les prévisions ne fonctionneront pas.")
 
 
