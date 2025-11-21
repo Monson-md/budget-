@@ -1,53 +1,47 @@
 import streamlit as st
-from datetime import datetime
-from utils import ocr_receipt, convert_currency
+from datetime import date
 
 def entry_form():
-    st.sidebar.header("➕ Nouvelle entrée")
-    
-    # Le formulaire est dans un conteneur pour éviter les soumissions accidentelles
-    with st.sidebar.form("form_new_entry"):
-        date = st.date_input("Date", datetime.now())
-        category = st.selectbox("Catégorie", ["Ventes","Marketing","Salaires","Equipement","Autre"])
-        
-        # Saisie du montant et de la devise
-        col1, col2 = st.columns(2)
-        with col1:
-            revenu = st.number_input("Revenu (Montant)", min_value=0.0, step=100.0, key="rev_input")
-        with col2:
-            depense = st.number_input("Dépense (Montant)", min_value=0.0, step=100.0, key="dep_input")
-        
-        currency = st.selectbox("Devise d'origine", ["EUR","USD","GBP","CAD","JPY"])
-        
-        note = st.text_area("Note / Description")
-        justificatif = st.file_uploader("Joindre un reçu (image)", type=['png', 'jpg', 'jpeg'])
-        
-        submitted = st.form_submit_button("✅ Ajouter l'entrée")
+    """
+    Formulaire pour ajouter une nouvelle entrée de revenu ou de dépense.
+    """
+    st.sidebar.header("➕ Ajouter une Entrée")
 
+    with st.sidebar.form("entry_form"):
+        type_entry = st.radio("Type d'entrée", ["Revenu", "Dépense"])
+        
+        montant = st.number_input("Montant (€)", min_value=0.01, format="%.2f")
+        
+        # Le type détermine les catégories
+        if type_entry == "Revenu":
+            categories = ["Salaire", "Investissement", "Cadeau", "Autre Revenu"]
+            default_cat = categories[0]
+        else:
+            categories = ["Loyer", "Nourriture", "Transport", "Loisirs", "Factures", "Autre Dépense"]
+            default_cat = categories[0]
+
+        categorie = st.selectbox("Catégorie", categories, index=categories.index(default_cat))
+        
+        date_entry = st.date_input("Date", date.today())
+        
+        description = st.text_area("Description (Optionnel)")
+        
+        # Placeholder pour le fichier (OCR)
+        uploaded_file = st.file_uploader("Joindre un justificatif (reçu/facture)", type=['png', 'jpg', 'jpeg'])
+
+        submitted = st.form_submit_button("Enregistrer l'Entrée")
+        
         if submitted:
-            # 1. Conversion des devises si nécessaire
-            rev_eur = revenu
-            dep_eur = depense
-            if currency != "EUR":
-                rev_eur = convert_currency(revenu, from_currency=currency, to_currency="EUR")
-                dep_eur = convert_currency(depense, from_currency=currency, to_currency="EUR")
+            # Ici, on simulerait l'OCR ou l'on passerait le fichier au serveur
+            ocr_text = f"Fichier: {uploaded_file.name}" if uploaded_file else ""
             
-            # 2. Structure de l'entrée
-            entry = {
-                "date": date.strftime("%Y-%m-%d"),
-                "category": category,
-                "revenu": rev_eur,  # Stocké en EUR
-                "depense": dep_eur, # Stocké en EUR
-                "devise_originale": currency,
-                "note": note,
+            return {
+                "type": type_entry,
+                "amount": montant,
+                "category": categorie,
+                "date": date_entry.isoformat(),
+                "description": description,
+                "justificatif_ocr": ocr_text,
+                "timestamp": date.today().isoformat()
             }
-
-            # 3. Traitement OCR
-            if justificatif:
-                text = ocr_receipt(justificatif)
-                entry["justificatif_ocr"] = text # Nouvelle clé pour le texte OCR
-            else:
-                entry["justificatif_ocr"] = ""
-
-            return entry
-    return None
+        return None

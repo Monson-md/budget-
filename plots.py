@@ -1,76 +1,49 @@
-import plotly.graph_objects as go
+import plotly.express as px
 import pandas as pd
 
 def plot_revenue_expense(df):
-    """Graphique en barres pour la comparaison Revenus vs Dépenses par date."""
+    """Trace les revenus et les dépenses mensuelles."""
+    # Agrégation mensuelle
+    monthly_summary = df.resample('M').agg(
+        Revenu=('amount', lambda x: x[df.loc[x.index, 'type'] == 'Revenu'].sum()),
+        Dépense=('amount', lambda x: x[df.loc[x.index, 'type'] == 'Dépense'].sum())
+    ).fillna(0).reset_index()
     
-    # Agrégation journalière pour une meilleure lisibilité si beaucoup d'entrées
-    df_daily = df.groupby(df.index).agg({
-        'revenu': 'sum',
-        'depense': 'sum'
-    })
-    
-    fig = go.Figure()
-    
-    fig.add_trace(go.Bar(x=df_daily.index, y=df_daily['revenu'], name='Revenu', marker_color='green'))
-    fig.add_trace(go.Bar(x=df_daily.index, y=df_daily['depense'], name='Dépense', marker_color='red'))
-    
-    fig.update_layout(
-        barmode='group', 
-        title="📈 Revenus vs Dépenses (Somme Journalière)",
-        xaxis_title="Date",
-        yaxis_title="Montant en EUR (€)",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    monthly_summary['month'] = monthly_summary['date'].dt.strftime('%Y-%m')
+
+    fig = px.bar(
+        monthly_summary,
+        x='month',
+        y=['Revenu', 'Dépense'],
+        title='Revenus vs Dépenses Mensuelles',
+        labels={'value': 'Montant (€)', 'month': 'Mois'},
+        barmode='group'
     )
+    fig.update_layout(legend_title_text='Type', yaxis_title='Montant (€)')
     return fig
 
 def plot_profit_margin(df):
-    """Graphique combiné pour le Profit (barre) et la Marge (%) (ligne)."""
+    """Trace la marge bénéficiaire mensuelle (basé sur l'agrégation dans analysis.py)."""
     
-    # Agrégation journalière
-    df_daily = df.groupby(df.index).agg({
-        'profit': 'sum',
-        'marge': 'mean' # Utilise la moyenne de la marge pour le jour
-    })
+    # Agrégation mensuelle (pour avoir la colonne 'marge')
+    monthly_data = df.resample('M').agg(
+        Revenu=('amount', lambda x: x[df.loc[x.index, 'type'] == 'Revenu'].sum()),
+        Dépense=('amount', lambda x: x[df.loc[x.index, 'type'] == 'Dépense'].sum())
+    ).fillna(0)
     
-    fig = go.Figure()
-    
-    # Trace 1: Profit (Barres, axe Y primaire)
-    fig.add_trace(go.Bar(
-        x=df_daily.index, 
-        y=df_daily['profit'], 
-        name='Profit (€)',
-        marker_color='blue',
-        opacity=0.6,
-        yaxis='y1'
-    ))
-    
-    # Trace 2: Marge (Ligne, axe Y secondaire)
-    fig.add_trace(go.Scatter(
-        x=df_daily.index, 
-        y=df_daily['marge'], 
-        mode='lines+markers', 
-        name='Marge (%)', 
-        line_color='orange',
-        yaxis='y2'
-    ))
-    
-    fig.update_layout(
-    # ... autres arguments de layout ...
-    yaxis=dict(
-        title=dict( # Utilisez 'title' comme un dictionnaire
-            text='Votre Titre d\'Axe Y', # Optionnel : définir le texte ici ou dans l'argument de niveau supérieur
-            font=dict(
-                size=16,
-                color='black',
-                family='Arial'
-            ) # Définissez la police DANS 'title'
-        ),
-        # Si vous voulez styliser les étiquettes des graduations (les nombres/dates)
-        tickfont=dict(
-            size=12, 
-            color='grey'
-        )
+    monthly_data['marge'] = ((monthly_data['Revenu'] - monthly_data['Dépense']) / monthly_data['Revenu']) * 100
+    monthly_data.loc[monthly_data['Revenu'] == 0, 'marge'] = 0
+    monthly_data = monthly_data.reset_index()
+    monthly_data['month'] = monthly_data['date'].dt.strftime('%Y-%m')
+
+    fig = px.line(
+        monthly_data,
+        x='month',
+        y='marge',
+        title='Marge Bénéficiaire Mensuelle (%)',
+        labels={'marge': 'Marge (%)', 'month': 'Mois'},
+        markers=True
     )
-)
+    fig.update_traces(line_color='#2ecc71')
+    fig.update_layout(yaxis_range=[-100, 100]) # Marge entre -100% et 100%
     return fig
