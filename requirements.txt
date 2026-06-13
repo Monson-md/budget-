@@ -10,12 +10,8 @@ openpyxl
 xlrd
 python-dateutil
 pytz
-requests
 Pillow
 pytesseract
 forex-python
 pdfkit
-streamlit
-pandas
-plotly
-firebase-admin
+requests

@@ -1,149 +1,141 @@
 import streamlit as st
-# Les imports CRITIQUES qui appellent vos autres fichiers
+import pandas as pd
 from temp_db_client import DBClient 
 from forms import entry_form
 from analysis import prepare_data, forecast_prophet
 from plots import plot_revenue_expense, plot_profit_margin
-from utils import export_csv, export_pdf, alert_expense
+# CORRECTION 1 : Importation de export_excel à la place de export_pdf
+from utils import export_csv, export_excel, alert_expense 
 from users import login, register, logout 
-
-import pandas as pd
 
 # --- CONFIGURATION DE LA PAGE ---
 st.set_page_config(
-    page_title="Budget App", 
+    page_title="ProBudget AI - Dashboard", 
+    page_icon="💰",
     layout="wide", 
     initial_sidebar_state="expanded"
 )
 
-# --- INITIALISATION DE LA BASE DE DONNÉES ---
-# L'initialisation de Firebase et Firestore se fait dans la classe DBClient.
+# --- STYLE CSS PERSONNALISÉ ---
+st.markdown("""
+    <style>
+    .main { background-color: #f5f7f9; }
+    .stMetric { background-color: #007bff; padding: 15px; border-radius: 10px; border: 1px solid #e6e9ef; }
+    </style>
+    """, unsafe_allow_html=True)
+
+# --- INITIALISATION DE LA DB ---
 if 'db' not in st.session_state:
     try:
-        # L'exécution de DBClient() tente de se connecter via le secret FIREBASE_SECRET
         st.session_state['db'] = DBClient()
     except Exception as e:
-        # DBClient affiche ses propres erreurs de connexion si le secret est mal formaté
-        st.error(f"Erreur d'initialisation du client DB: {e}")
+        st.error(f"Erreur d'initialisation de la base de données : {e}")
         st.stop()
-
 db = st.session_state['db']
 
-# Vérification si la connexion Firebase a échoué dans DBClient
-if not db.db: 
-    # Si db.db est None (car l'initialisation a échoué dans __init__ de DBClient)
-    st.info("La configuration Firebase a échoué. Veuillez vérifier le secret FIREBASE_SECRET dans Streamlit Cloud.")
-    st.stop()
+# --- LOGIQUE D'ACCÈS (NON CONNECTÉ) ---
+if 'user' not in st.session_state:
+    # On cache le menu latéral si non connecté pour la sécurité
+    st.markdown("<style>#MainMenu {visibility: hidden;} footer {visibility: hidden;}</style>", unsafe_allow_html=True)
     
-
-# --- GESTION DE L'AUTHENTIFICATION ---
-# Si 'user' n'est pas dans la session, afficher les pages de connexion/inscription.
-if 'user' not in st.session_state or 'role' not in st.session_state:
+    st.title("🚀 Bienvenue sur ProBudget AI")
+    st.info("Gerez vos finances avec la puissance de l'IA.")
     
-    st.title("🔐 Connexion et Inscription")
-    
-    tab1, tab2 = st.tabs(["Se connecter", "S'inscrire"])
+    tab1, tab2 = st.tabs(["🔒 Connexion", "📝 Créer un compte"])
     
     with tab1:
-        st.subheader("Accédez à votre espace")
         with st.form("login_form"):
-            email_log = st.text_input("Email de connexion")
+            email_log = st.text_input("Email")
             pass_log = st.text_input("Mot de passe", type="password")
-            submitted_log = st.form_submit_button("Se connecter")
-            
-            if submitted_log:
-                # Appelle la fonction login de users.py
+            if st.form_submit_button("Se connecter", use_container_width=True):
                 login(email_log, pass_log, db)
 
     with tab2:
-        st.subheader("Créez un nouveau compte")
         with st.form("register_form"):
-            email_reg = st.text_input("Email d'inscription")
-            pass_reg = st.text_input("Mot de passe (min 6 car.)", type="password")
-            submitted_reg = st.form_submit_button("S'inscrire")
-            
-            if submitted_reg:
-                if len(pass_reg) < 6:
-                    st.error("Le mot de passe doit contenir au moins 6 caractères.")
-                else:
-                    # Appelle la fonction register de users.py
-                    register(email_reg, pass_reg, db)
-
-    # Arrête l'exécution si l'utilisateur n'est pas connecté
+            email_reg = st.text_input("Email professionnel ou personnel")
+            pass_reg = st.text_input("Mot de passe (sécure)", type="password")
+            if st.form_submit_button("Créer mon compte", use_container_width=True):
+                register(email_reg, pass_reg, db)
     st.stop()
-
+    
+# --- LOGIQUE D'ACCÈS (UTILISATEUR CONNECTÉ) ---
 else:
-    # --- L'UTILISATEUR EST CONNECTÉ ---
-    
-    # Barre latérale avec infos utilisateur et déconnexion
+    # Barre latérale globale de navigation
     with st.sidebar:
-        st.success(f"Connecté : {st.session_state['user']} (UID: {st.session_state['uid']})")
-        # Le formulaire entry_form est dans forms.py
-        entry = entry_form() 
-        if entry:
-            # Collection personnalisée par UID pour isoler les données
-            collection_name = f"entries_{st.session_state['uid']}"
-            if db.add_entry(collection_name, entry):
-                st.success("Entrée ajoutée avec succès !")
-                st.rerun() 
-        
+        st.title("Menu Principal")
+        st.write(f"Connecté en tant que : **{st.session_state['user']}**")
+        page = st.radio("Aller vers :", ["📊 Tableau de Bord", "🚀 Investissements"])
         st.markdown("---")
-        logout() # Le bouton de déconnexion est dans users.py
+        logout()
 
-    # --- TABLEAU DE BORD PRINCIPAL ---
-    st.header("✨ Tableau de Bord de Gestion Budgétaire")
-
-    collection_name = f"entries_{st.session_state['uid']}"
-    entries = db.get_entries(collection_name)
-    
-    df = prepare_data(entries) # analysis.py
-
-    if not df.empty:
+    # --- SÉLECTION DES PAGES ---
+    if page == "📊 Tableau de Bord":
+        st.title("📊 Tableau de Bord Budgétaire")
         
-        # 1. KPI (Indicateurs Clés)
-        st.subheader("📊 Indicateurs Clés")
-        col1, col2, col3 = st.columns(3)
+        # Barre latérale de saisie (spécifique au budget)
+        with st.sidebar:
+            st.subheader("➕ Nouvelle Opération")
+            entry = entry_form() 
+            if entry:
+                collection_name = f"entries_{st.session_state['uid']}"
+                if db.add_entry(collection_name, entry):
+                    st.success("Opération enregistrée avec succès !")
+                    # Utilisation d'un rafraîchissement contrôlé pour éviter les boucles OCR
+                    st.toast("Données synchronisées avec Firebase", icon="🔄")
+                    st.rerun() 
         
-        with col1:
-            total_profit = df['profit'].sum()
-            st.metric("Profit Total", f"{total_profit:,.2f} €")
+        # Chargement et affichage des données du budget
+        collection_name = f"entries_{st.session_state['uid']}"
+        entries = db.get_entries(collection_name)
+        df = prepare_data(entries)
 
-        with col2:
-            avg_marge = df['marge'].mean()
-            st.metric("Marge Moyenne", f"{avg_marge:.2f} %")
-        
-        with col3:
-            forecast = forecast_prophet(df) # analysis.py
-            if forecast is not None:
-                st.metric("Prévision Profit (Mois prochain)", f"{forecast:,.2f} €")
-            else:
-                st.info("Pas assez de données pour la prévision.")
+        if not df.empty:
+            # 1. Indicateurs Clés
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Profit Total (Pivot EUR)", f"{df['profit'].sum():,.2f} €", delta=None)
+            with col2:
+                # Éviter l'affichage de 'nan %' s'il n'y a pas encore assez de données de revenus
+                marge_moyenne = df['marge'].mean()
+                marge_txt = f"{marge_moyenne:.1f} %" if not pd.isna(marge_moyenne) else "0.0 %"
+                st.metric("Marge Moyenne", marge_txt)
+            with col3:
+                forecast = forecast_prophet(df)
+                val = f"{forecast:,.2f} €" if forecast else "Calcul..."
+                st.metric("Prévision IA (M+1)", val)
 
-        # 2. Graphiques Interactifs (plots.py)
-        st.markdown("---")
-        st.subheader("📈 Visualisation")
-        
-        col_graph1, col_graph2 = st.columns(2)
-        with col_graph1:
-            st.plotly_chart(plot_revenue_expense(df), use_container_width=True)
-        with col_graph2:
-            st.plotly_chart(plot_profit_margin(df), use_container_width=True)
+            # 2. Graphiques
+            st.subheader("📈 Analyses Graphiques")
+            c1, c2 = st.columns(2)
+            with c1:
+                st.plotly_chart(plot_revenue_expense(df), use_container_width=True)
+            with c2:
+                st.plotly_chart(plot_profit_margin(df), use_container_width=True)
 
-        # 3. Alertes Automatiques (utils.py)
-        alert_expense(df) 
-
-        # 4. Données Brutes
-        st.markdown("---")
-        st.subheader("📑 Historique des Transactions")
-        st.dataframe(df.sort_index(ascending=False), use_container_width=True)
-        
-        # 5. Export (utils.py)
-        st.subheader("📤 Exporter")
-        col_exp1, col_exp2 = st.columns(2)
-        with col_exp1:
-            export_csv(df)
-        with col_exp2:
-            export_pdf(df)
+            # 3. Alertes et Historique
+            alert_expense(df) 
             
-    else:
-        st.info("Ajoutez des entrées dans la barre latérale pour commencer à visualiser vos données.")
+            with st.expander("📂 Voir l'historique complet des transactions"):
+                # Tri de l'affichage par index décroissant pour voir les plus récents en premier
+                st.dataframe(df.sort_index(ascending=False), use_container_width=True)
+            
+            # 4. Modules d'Export
+            st.markdown("---")
+            st.subheader("📥 Rapports")
+            exp1, exp2 = st.columns(2)
+            with exp1:
+                export_csv(df)
+            with exp2:
+                # CORRECTION 2 : Appel du bon nom de la fonction Excel
+                export_excel(df)
+                
+        else:
+            st.warning("👋 Bienvenue ! Commencez par ajouter votre première transaction dans le menu à gauche.")  
+
+    elif page == "🚀 Investissements":
+        # Importation dynamique du module de la Phase 2
+        try:
+            from investments import investment_dashboard
+            investment_dashboard(db, st.session_state['uid'])
+        except ImportError:
+            st.error("Le fichier 'investments.py' est manquant ou contient une erreur de syntaxe.")

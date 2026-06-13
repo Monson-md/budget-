@@ -4,56 +4,68 @@ import streamlit as st
 
 class DBClient:
     def __init__(self):
-        # Vérifie si l'application est déjà initialisée pour éviter l'erreur "Default app already exists"
         if not firebase_admin._apps:
             try:
-                # 1. Récupération directe du dictionnaire depuis les secrets
-                # Streamlit convertit automatiquement la section [firebase] en dictionnaire
+                # Utilisation sécurisée des secrets Streamlit
                 key_dict = dict(st.secrets["firebase"])
                 
-                # 2. Correction critique des sauts de ligne dans la clé privée
-                # Les \n sont parfois lus comme des caractères littéraux '\\n', il faut les remplacer
                 if "private_key" in key_dict:
                     key_dict["private_key"] = key_dict["private_key"].replace("\\n", "\n")
 
-                # 3. Initialisation de l'application avec le dictionnaire
                 cred = credentials.Certificate(key_dict)
                 firebase_admin.initialize_app(cred)
                 
             except Exception as e:
-                st.error(f"Erreur d'initialisation Firebase : {e}")
-                return
+                st.error(f"❌ Erreur critique d'initialisation Firebase : {e}")
+                st.stop() # On arrête tout si la DB ne répond pas
 
-        # Obtention du client Firestore
         self.db = firestore.client()
 
     # --- GESTION UTILISATEURS ---
 
     def get_user(self, email):
-        """Récupère les infos de l'utilisateur dans la collection 'users'."""
+        """Récupère les infos de l'utilisateur."""
         if not self.db: return None
-        doc_ref = self.db.collection('users').document(email)
-        doc = doc_ref.get()
-        if doc.exists:
-            return doc.to_dict()
-        return None
+        try:
+            doc_ref = self.db.collection('users').document(email.lower()) # Toujours en minuscule pour éviter les doublons
+            doc = doc_ref.get()
+            return doc.to_dict() if doc.exists else None
+        except Exception:
+            return None
 
     def save_user(self, email, user_data):
-        """Enregistre un nouvel utilisateur."""
+        """Enregistre un utilisateur avec mise en minuscule de l'email."""
         if not self.db: return False
-        self.db.collection('users').document(email).set(user_data)
-        return True
+        try:
+            # On s'assure que l'email est l'ID du document en minuscules
+            self.db.collection('users').document(email.lower()).set(user_data)
+            return True
+        except Exception as e:
+            st.error(f"Erreur sauvegarde : {e}")
+            return False
 
-    # --- GESTION BUDGET ---
+    # --- GESTION BUDGET (OPTIMISÉE) ---
 
     def add_entry(self, collection, entry):
-        """Ajoute une transaction."""
+        """Ajoute une transaction avec horodatage automatique."""
         if not self.db: return False
-        self.db.collection(collection).add(entry)
-        return True
+        try:
+            # Ajout d'un timestamp serveur pour un tri précis plus tard
+            entry['server_timestamp'] = firestore.SERVER_TIMESTAMP
+            self.db.collection(collection).add(entry)
+            return True
+        except Exception as e:
+            st.error(f"Erreur d'ajout : {e}")
+            return False
 
     def get_entries(self, collection):
-        """Récupère les transactions."""
+        """Récupère les transactions triées par date de création."""
         if not self.db: return []
-        docs = self.db.collection(collection).stream()
-        return [{**doc.to_dict(), 'id': doc.id} for doc in docs]
+        try:
+            # Tri par date pour éviter que l'application ne mélange les transactions
+            docs = self.db.collection(collection).order_by('server_timestamp', direction=firestore.Query.DESCENDING).stream()
+            return [{**doc.to_dict(), 'id': doc.id} for doc in docs]
+        except Exception:
+            # Si le tri échoue (ex: pas de timestamp sur les vieilles entrées), on récupère tout sans tri
+            docs = self.db.collection(collection).stream()
+            return [{**doc.to_dict(), 'id': doc.id} for doc in docs]

@@ -1,1 +1,15 @@
-FIREBASE_SECRE.json
+# Cache Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Configuration locale VS Code
+.vscode/
+
+# Secrets locaux (Ne JAMAIS envoyer en ligne !)
+.streamlit/secrets.toml
+
+# Environnement virtuel (si tu en as un)
+venv/
+.venv/

@@ -1,65 +1,67 @@
-import streamlit as st # <-- Correction ici (on retire le 'c')
+import streamlit as st
 from passlib.hash import sha256_crypt
-# db_client n'est pas importé ici car il est passé en argument depuis app.py
 
-# --- FONCTION DE CONNEXION (MISE À JOUR) ---
+# --- FONCTION DE CONNEXION ---
 def login(email, password, db):
-    """Gère la connexion de l'utilisateur et vérifie le hash du mot de passe."""
+    """Gère la connexion de l'utilisateur avec validation stricte."""
+    if not email or not password:
+        st.error("Veuillez remplir tous les champs.")
+        return
+
+    email = email.lower().strip() # Nettoyage de l'email
+    
     try:
-        # 1. Récupération des données utilisateur via db_client
         user_data = db.get_user(email) 
         if user_data:
-            # 2. Vérification du mot de passe haché avec passlib
-            # .verify compare le mot de passe clair avec le hash stocké
+            # Vérification sécurisée
             if sha256_crypt.verify(password, user_data.get('password_hash', '')):
                 st.session_state['user'] = email
                 st.session_state['role'] = user_data.get('role', 'user')
-                st.success(f"Connexion réussie pour {email} !")
+                # Création d'un UID propre pour les collections Firestore
+                st.session_state['uid'] = email.replace('.', '_').replace('@', '_at_')
+                
+                st.success(f"Bienvenue, {email} !")
                 st.rerun()
             else:
-                st.error("Email ou mot de passe incorrect.")
+                st.error("Identifiants incorrects.")
         else:
-            st.error("Email ou mot de passe incorrect.")
+            st.error("Identifiants incorrects.")
     except Exception as e:
-        # Cela pourrait être une erreur de connexion à la BDD
-        st.error(f"Erreur de connexion : {e}")
+        st.error(f"Erreur système lors de la connexion.")
 
-
-# --- FONCTION D'INSCRIPTION (NOUVELLE) ---
+# --- FONCTION D'INSCRIPTION ---
 def register(email, password, db, role="user"):
-    """Gère l'inscription de l'utilisateur, hachage et sauvegarde dans Firestore."""
+    """Gère l'inscription avec vérification de format."""
+    if not email or len(password) < 6:
+        st.error("L'email est requis et le mot de passe doit faire 6 caractères min.")
+        return False
+
+    email = email.lower().strip()
     
-    # 1. Vérification de l'existence
-    user_data = db.get_user(email)
-    if user_data:
-        st.warning("Cet email est déjà enregistré. Veuillez vous connecter.")
+    # Vérification si l'utilisateur existe déjà
+    if db.get_user(email):
+        st.warning("Cet email est déjà utilisé.")
         return False
         
-    # 2. Hachage du mot de passe avec sha256_crypt de passlib
     hashed_password = sha256_crypt.hash(password)
 
-    # 3. Préparation des données et sauvegarde
     new_user_data = {
         "email": email,
         "password_hash": hashed_password, 
-        "role": role 
+        "role": role,
+        "created_at": st.date_input("Date du jour", disabled=True) # Log de sécurité
     }
 
-    try:
-        db.save_user(email, new_user_data) 
-        st.success("Inscription réussie ! Vous pouvez maintenant vous connecter.")
+    if db.save_user(email, new_user_data):
+        st.success("Compte créé avec succès ! Connectez-vous maintenant.")
         return True
-    except Exception as e:
-        st.error(f"Erreur lors de l'inscription : {e}")
-        return False
+    return False
 
-
-# --- FONCTION DE DÉCONNEXION (À GARDER) ---
+# --- FONCTION DE DÉCONNEXION ---
 def logout():
-    """Ajoute le bouton de déconnexion dans la barre latérale."""
-    if st.sidebar.button("Déconnexion"):
-        if 'user' in st.session_state:
-            del st.session_state['user']
-        if 'role' in st.session_state:
-            del st.session_state['role']
+    """Nettoyage complet de la session."""
+    if st.sidebar.button("Déconnexion", key="logout_btn"):
+        # On vide tout le dictionnaire de session pour la sécurité
+        for key in list(st.session_state.keys()):
+            del st.session_state[key]
         st.rerun()
