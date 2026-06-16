@@ -1,5 +1,6 @@
 import streamlit as st
 from passlib.hash import sha256_crypt
+from datetime import datetime
 
 # --- FONCTION DE CONNEXION ---
 def login(email, password, db):
@@ -13,7 +14,7 @@ def login(email, password, db):
     try:
         user_data = db.get_user(email) 
         if user_data:
-            # Vérification sécurisée
+            # Vérification sécurisée du mot de passe haché
             if sha256_crypt.verify(password, user_data.get('password_hash', '')):
                 st.session_state['user'] = email
                 st.session_state['role'] = user_data.get('role', 'user')
@@ -23,11 +24,11 @@ def login(email, password, db):
                 st.success(f"Bienvenue, {email} !")
                 st.rerun()
             else:
-                st.error("Identifiants incorrects.")
+                st.error("Identifiants incorrects (Mot de passe erroné).")
         else:
-            st.error("Identifiants incorrects.")
+            st.error("Identifiants incorrects (Cet email n'existe pas).")
     except Exception as e:
-        st.error(f"Erreur système lors de la connexion.")
+        st.error(f"Erreur système lors de la connexion : {e}")
 
 # --- FONCTION D'INSCRIPTION ---
 def register(email, password, db, role="user"):
@@ -38,23 +39,29 @@ def register(email, password, db, role="user"):
 
     email = email.lower().strip()
     
-    # Vérification si l'utilisateur existe déjà
-    if db.get_user(email):
-        st.warning("Cet email est déjà utilisé.")
+    try:
+        # Vérification si l'utilisateur existe déjà
+        if db.get_user(email):
+            st.warning("Cet email est déjà utilisé.")
+            return False
+            
+        hashed_password = sha256_crypt.hash(password)
+
+        # CORRECTION : On utilise une vraie chaîne de date ISO, pas un widget Streamlit !
+        new_user_data = {
+            "email": email,
+            "password_hash": hashed_password, 
+            "role": role,
+            "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S") # Date propre pour Firebase
+        }
+
+        if db.save_user(email, new_user_data):
+            st.success("🎉 Compte créé avec succès ! Basculez sur l'onglet 'Connexion' pour entrer.")
+            st.balloons()
+            return True
+    except Exception as e:
+        st.error(f"Erreur lors de la création du compte : {e}")
         return False
-        
-    hashed_password = sha256_crypt.hash(password)
-
-    new_user_data = {
-        "email": email,
-        "password_hash": hashed_password, 
-        "role": role,
-        "created_at": st.date_input("Date du jour", disabled=True) # Log de sécurité
-    }
-
-    if db.save_user(email, new_user_data):
-        st.success("Compte créé avec succès ! Connectez-vous maintenant.")
-        return True
     return False
 
 # --- FONCTION DE DÉCONNEXION ---
