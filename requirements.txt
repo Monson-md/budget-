@@ -3,7 +3,7 @@ pandas
 numpy
 plotly
 firebase-admin
-passlib
+bcrypt
 prophet
 matplotlib
 openpyxl
@@ -12,6 +12,4 @@ python-dateutil
 pytz
 Pillow
 pytesseract
-forex-python
-pdfkit
 requests

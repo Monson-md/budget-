@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+
+jobs:
+  verify:
+    name: Vérification syntaxe et imports
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout du dépôt
+        uses: actions/checkout@v4
+
+      - name: Configuration de Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Installation des dépendances (requirements.txt)
+        run: pip install -r requirements.txt
+
+      - name: Vérification de la syntaxe de tous les fichiers .py (py_compile)
+        run: find . -name "*.py" -not -path "./.git/*" | xargs -r python -m py_compile
+
+      - name: Test d'import individuel des modules non-entrypoint
+        run: python .github/scripts/check_imports.py

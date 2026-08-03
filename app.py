@@ -1,12 +1,13 @@
 import streamlit as st
 import pandas as pd
-from temp_db_client import DBClient 
+from temp_db_client import DBClient
 from forms import entry_form
-from analysis import prepare_data, forecast_prophet
+from analysis import prepare_data, forecast_prophet, PROPHET_AVAILABLE
 from plots import plot_revenue_expense, plot_profit_margin
 # CORRECTION 1 : Importation de export_excel à la place de export_pdf
-from utils import export_csv, export_excel, alert_expense 
-from users import login, register, logout 
+from utils import export_csv, export_excel, alert_expense
+from users import login, register, logout, request_password_reset, reset_password
+from currency import CURRENCY_SYMBOLS, DEFAULT_ALERT_THRESHOLDS
 
 # --- CONFIGURATION DE LA PAGE ---
 st.set_page_config(
@@ -28,8 +29,9 @@ st.markdown("""
 if 'db' not in st.session_state:
     try:
         st.session_state['db'] = DBClient()
-    except Exception as e:
-        st.error(f"Erreur d'initialisation de la base de données : {e}")
+    except Exception:
+        # Pas de détail brut d'exception : il peut contenir des fragments de la clé Firebase.
+        st.error("Erreur d'initialisation de la base de données.")
         st.stop()
 db = st.session_state['db']
 
@@ -41,8 +43,8 @@ if 'user' not in st.session_state:
     st.title("🚀 Bienvenue sur ProBudget AI")
     st.info("Gerez vos finances avec la puissance de l'IA.")
     
-    tab1, tab2 = st.tabs(["🔒 Connexion", "📝 Créer un compte"])
-    
+    tab1, tab2, tab3 = st.tabs(["🔒 Connexion", "📝 Créer un compte", "🔑 Mot de passe oublié"])
+
     with tab1:
         with st.form("login_form"):
             email_log = st.text_input("Email")
@@ -54,17 +56,67 @@ if 'user' not in st.session_state:
         with st.form("register_form"):
             email_reg = st.text_input("Email professionnel ou personnel")
             pass_reg = st.text_input("Mot de passe (sécure)", type="password")
+            devise_reg = st.selectbox("Devise de référence", list(CURRENCY_SYMBOLS.keys()))
             if st.form_submit_button("Créer mon compte", use_container_width=True):
-                register(email_reg, pass_reg, db)
+                register(email_reg, pass_reg, db, base_currency=devise_reg)
+
+    with tab3:
+        st.caption(
+            "Aucun service d'email n'est configuré pour l'instant : le code de "
+            "réinitialisation doit être récupéré manuellement (console Firestore) "
+            "et transmis à l'utilisateur par l'administrateur."
+        )
+        with st.form("reset_request_form"):
+            st.markdown("##### 1. Demander un code de réinitialisation")
+            email_reset_req = st.text_input("Email du compte")
+            if st.form_submit_button("Demander un code", use_container_width=True):
+                request_password_reset(email_reset_req, db)
+
+        with st.form("reset_confirm_form"):
+            st.markdown("##### 2. Utiliser le code reçu")
+            email_reset = st.text_input("Email", key="reset_email")
+            token_reset = st.text_input("Code de réinitialisation")
+            new_pass_reset = st.text_input("Nouveau mot de passe", type="password")
+            if st.form_submit_button("Réinitialiser le mot de passe", use_container_width=True):
+                reset_password(email_reset, token_reset, new_pass_reset, db)
     st.stop()
     
 # --- LOGIQUE D'ACCÈS (UTILISATEUR CONNECTÉ) ---
 else:
+    base_currency = st.session_state.get('base_currency', 'XOF')
+    currency_symbol = CURRENCY_SYMBOLS.get(base_currency, base_currency)
+
     # Barre latérale globale de navigation
     with st.sidebar:
         st.title("Menu Principal")
         st.write(f"Connecté en tant que : **{st.session_state['user']}**")
         page = st.radio("Aller vers :", ["📊 Tableau de Bord", "🚀 Investissements"])
+
+        with st.expander("⚙️ Paramètres du profil"):
+            currency_options = list(CURRENCY_SYMBOLS.keys())
+            new_currency = st.selectbox(
+                "Devise de référence",
+                currency_options,
+                index=currency_options.index(base_currency) if base_currency in currency_options else 0,
+                key="settings_currency"
+            )
+            current_threshold = st.session_state.get(
+                'alert_threshold', DEFAULT_ALERT_THRESHOLDS.get(base_currency, 500)
+            )
+            new_threshold = st.number_input(
+                f"Seuil d'alerte dépense élevée ({CURRENCY_SYMBOLS.get(new_currency, new_currency)})",
+                min_value=0.0, value=float(current_threshold), step=10.0, key="settings_threshold"
+            )
+            if st.button("Enregistrer les paramètres", use_container_width=True):
+                if db.update_user(st.session_state['user'], {
+                    "base_currency": new_currency,
+                    "alert_threshold": new_threshold,
+                }):
+                    st.session_state['base_currency'] = new_currency
+                    st.session_state['alert_threshold'] = new_threshold
+                    st.success("Paramètres mis à jour.")
+                    st.rerun()
+
         st.markdown("---")
         logout()
 
@@ -75,7 +127,7 @@ else:
         # Barre latérale de saisie (spécifique au budget)
         with st.sidebar:
             st.subheader("➕ Nouvelle Opération")
-            entry = entry_form() 
+            entry = entry_form(base_currency)
             if entry:
                 collection_name = f"entries_{st.session_state['uid']}"
                 if db.add_entry(collection_name, entry):
@@ -91,18 +143,26 @@ else:
 
         if not df.empty:
             # 1. Indicateurs Clés
-            col1, col2, col3 = st.columns(3)
+            # La carte "Prévision IA" n'apparaît que si Prophet est disponible ;
+            # sinon le reste du tableau de bord continue de fonctionner normalement.
+            cols = st.columns(3) if PROPHET_AVAILABLE else st.columns(2)
+            col1, col2 = cols[0], cols[1]
             with col1:
-                st.metric("Profit Total (Pivot EUR)", f"{df['profit'].sum():,.2f} €", delta=None)
+                st.metric(f"Profit Total (Pivot {base_currency})", f"{df['profit'].sum():,.2f} {currency_symbol}", delta=None)
             with col2:
                 # Éviter l'affichage de 'nan %' s'il n'y a pas encore assez de données de revenus
                 marge_moyenne = df['marge'].mean()
                 marge_txt = f"{marge_moyenne:.1f} %" if not pd.isna(marge_moyenne) else "0.0 %"
                 st.metric("Marge Moyenne", marge_txt)
-            with col3:
-                forecast = forecast_prophet(df)
-                val = f"{forecast:,.2f} €" if forecast else "Calcul..."
-                st.metric("Prévision IA (M+1)", val)
+
+            if PROPHET_AVAILABLE:
+                with cols[2]:
+                    with st.spinner("Calcul de la prévision IA..."):
+                        forecast = forecast_prophet(df)
+                    if forecast is not None:
+                        st.metric("Prévision IA (M+1)", f"{forecast:,.2f} {currency_symbol}")
+                    else:
+                        st.metric("Prévision IA (M+1)", "Indisponible")
 
             # 2. Graphiques
             st.subheader("📈 Analyses Graphiques")
@@ -113,7 +173,7 @@ else:
                 st.plotly_chart(plot_profit_margin(df), use_container_width=True)
 
             # 3. Alertes et Historique
-            alert_expense(df) 
+            alert_expense(df, st.session_state.get('alert_threshold'), base_currency)
             
             with st.expander("📂 Voir l'historique complet des transactions"):
                 # Tri de l'affichage par index décroissant pour voir les plus récents en premier
@@ -124,10 +184,10 @@ else:
             st.subheader("📥 Rapports")
             exp1, exp2 = st.columns(2)
             with exp1:
-                export_csv(df)
+                export_csv(df, base_currency)
             with exp2:
                 # CORRECTION 2 : Appel du bon nom de la fonction Excel
-                export_excel(df)
+                export_excel(df, base_currency)
                 
         else:
             st.warning("👋 Bienvenue ! Commencez par ajouter votre première transaction dans le menu à gauche.")  

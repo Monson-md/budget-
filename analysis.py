@@ -2,9 +2,13 @@ import pandas as pd
 import streamlit as st
 
 try:
-    from prophet import Prophet 
-except ImportError:
+    from prophet import Prophet
+    PROPHET_AVAILABLE = True
+except Exception:
+    # On capture toute exception (pas seulement ImportError) car l'import de
+    # Prophet peut aussi échouer au runtime (ex: binaire cmdstan manquant).
     Prophet = None
+    PROPHET_AVAILABLE = False
 
 def prepare_data(entries):
     """Transforme les données brutes Firestore en DataFrame structuré."""
@@ -34,9 +38,10 @@ def prepare_data(entries):
     
     return df
 
+@st.cache_data(ttl=3600, show_spinner=False)
 def forecast_prophet(df):
-    """Prédit le profit du mois prochain."""
-    if Prophet is None or df.empty:
+    """Prédit le profit du mois prochain. Retourne None si indisponible."""
+    if not PROPHET_AVAILABLE or df.empty:
         return None
 
     ts = df['profit'].resample('ME').sum().reset_index()
