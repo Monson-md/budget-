@@ -168,7 +168,7 @@ else:
             st.subheader("📈 Analyses Graphiques")
             c1, c2 = st.columns(2)
             with c1:
-                st.plotly_chart(plot_revenue_expense(df), use_container_width=True)
+                st.plotly_chart(plot_revenue_expense(df, base_currency), use_container_width=True)
             with c2:
                 st.plotly_chart(plot_profit_margin(df), use_container_width=True)
 
@@ -196,6 +196,6 @@ else:
         # Importation dynamique du module de la Phase 2
         try:
             from investments import investment_dashboard
-            investment_dashboard(db, st.session_state['uid'])
+            investment_dashboard(db, st.session_state['uid'], base_currency)
         except ImportError:
             st.error("Le fichier 'investments.py' est manquant ou contient une erreur de syntaxe.")

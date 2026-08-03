@@ -1,7 +1,8 @@
 import plotly.express as px
 import pandas as pd
+from currency import CURRENCY_SYMBOLS
 
-def plot_revenue_expense(df):
+def plot_revenue_expense(df, base_currency="XOF"):
     """Trace les revenus et les dépenses mensuelles avec un design épuré."""
     if df.empty:
         return px.scatter(title="Aucune donnée pour le graphique")
@@ -9,7 +10,7 @@ def plot_revenue_expense(df):
     # Resampling sur l'index Datetime
     rev = df[df['type'] == 'Revenu'].resample('ME')['amount'].sum().rename('Revenu')
     dep = df[df['type'] == 'Dépense'].resample('ME')['amount'].sum().rename('Dépense')
-    
+
     plot_df = pd.concat([rev, dep], axis=1).fillna(0)
     # CORRECTION CRITIQUE : On extrait le mois depuis l'index, pas depuis une colonne absente
     plot_df['month'] = plot_df.index.strftime('%b %Y')
@@ -21,7 +22,8 @@ def plot_revenue_expense(df):
         color_discrete_map={'Revenu': '#2ecc71', 'Dépense': '#e74c3c'},
         template="plotly_white"
     )
-    fig.update_layout(xaxis_title="", yaxis_title="Montant (€)", legend_title="")
+    symbol = CURRENCY_SYMBOLS.get(base_currency, base_currency)
+    fig.update_layout(xaxis_title="", yaxis_title=f"Montant ({symbol})", legend_title="")
     return fig
 
 def plot_profit_margin(df):
