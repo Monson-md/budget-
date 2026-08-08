@@ -17,18 +17,40 @@ if os.path.exists(windows_tesseract_path):
 MAX_OCR_TEXT_LENGTH = 500
 
 def extract_amount_from_text(text):
-    """Analyse le texte du ticket pour trouver le montant total."""
-    # CORRECTION DES REGEX : Formules nettoyées pour attraper parfaitement les prix
+    """Analyse le texte du ticket pour trouver le montant total.
+
+    Gère deux formats de montant :
+    - FCFA/entier : "7 220", "1 101" (chiffres groupés par des espaces,
+      sans décimales)
+    - EUR/décimal : "12,34", "12.34" (virgule ou point suivi de 2 décimales)
+    """
+    if not text:
+        return 0.0
+
+    # Chiffres éventuellement groupés par des espaces (séparateur de
+    # milliers FCFA), suivis en option d'une partie décimale (format EUR).
+    number = r'(\d[\d\s]*\d|\d)(?:[.,](\d{2}))?'
+
     patterns = [
-        r'(?:total|net|payer|montant|ttc)[\s\D]*(\d+[\.,]\d{2})',
-        r'(\d+[\.,]\d{2})\s*(?:€|eur|xof|cfa)'
+        # Priorité : montant situé juste après un mot-clé de total. Le
+        # séparateur exclut explicitement les retours à la ligne pour ne
+        # pas "sauter" sur une autre ligne du ticket (ex: la ligne TVA).
+        r'(?:total|net|à\s*payer|payer|montant|ttc)[^\d\n]*' + number,
+        # Repli : montant directement suivi d'un symbole/code de devise.
+        number + r'\s*(?:€|eur|xof|cfa|fcfa)',
     ]
     for pattern in patterns:
         matches = re.findall(pattern, text, re.IGNORECASE)
         if matches:
-            amount_str = matches[-1].replace(',', '.')
+            int_part, dec_part = matches[-1]
+            # Nettoyage des espaces (classiques et insécables) utilisés
+            # comme séparateur de milliers, sans toucher à la décimale
+            # capturée séparément dans dec_part.
+            montant_str = int_part.replace(' ', '').replace('\xa0', '')
+            if dec_part:
+                montant_str += f'.{dec_part}'
             try:
-                return float(amount_str)
+                return float(montant_str)
             except ValueError:
                 continue
     return 0.0
@@ -54,6 +76,15 @@ def entry_form(base_currency="XOF"):
     montant_initial = 0.01
     texte_brut_ticket = "Aucun scan effectué"
 
+    # Devise affichée dans le message de succès du scan : on lit la sélection
+    # déjà faite par l'utilisateur dans le formulaire (via sa clé de widget),
+    # avec la devise de référence du profil comme valeur par défaut avant
+    # tout choix explicite.
+    devise_options = ["XOF", "EUR", "USD"]
+    default_index = devise_options.index(base_currency) if base_currency in devise_options else 0
+    devise_widget_key = "entry_form_devise"
+    devise_affichage = st.session_state.get(devise_widget_key, base_currency)
+
     if uploaded_file is not None:
         with st.spinner("🔍 Lecture du ticket..."):
             try:
@@ -64,7 +95,7 @@ def entry_form(base_currency="XOF"):
                 detected_amount = extract_amount_from_text(extracted_text)
                 if detected_amount > 0:
                     montant_initial = detected_amount
-                    st.sidebar.success(f"🎯 Montant détecté : {detected_amount:.2f}")
+                    st.sidebar.success(f"🎯 Montant détecté : {detected_amount:.2f} {devise_affichage}")
                 else:
                     st.sidebar.warning("Ticket lu, mais aucun montant détecté automatiquement.")
             except Exception as e:
@@ -76,9 +107,7 @@ def entry_form(base_currency="XOF"):
         type_entry = st.radio("Nature", ["Revenu", "Dépense"], horizontal=True)
 
         # Sélection de la devise, avec la devise de référence du profil pré-sélectionnée
-        devise_options = ["XOF", "EUR", "USD"]
-        default_index = devise_options.index(base_currency) if base_currency in devise_options else 0
-        devise = st.selectbox("Devise de saisie", devise_options, index=default_index)
+        devise = st.selectbox("Devise de saisie", devise_options, index=default_index, key=devise_widget_key)
 
         # Le champ montant prend la valeur détectée par l'OCR si elle existe !
         montant_saisi = st.number_input(f"Montant en ({devise})", min_value=0.00, value=float(montant_initial), step=0.01, format="%.2f")
