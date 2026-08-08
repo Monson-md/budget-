@@ -1,21 +1,28 @@
 import streamlit as st
 import pandas as pd
+import extra_streamlit_components as stx
 from temp_db_client import DBClient
 from forms import entry_form
 from analysis import prepare_data, forecast_prophet, PROPHET_AVAILABLE
 from plots import plot_revenue_expense, plot_profit_margin
 # CORRECTION 1 : Importation de export_excel à la place de export_pdf
 from utils import export_csv, export_excel, alert_expense
-from users import login, register, logout, request_password_reset, reset_password
+from users import login, register, logout, request_password_reset, reset_password, try_remember_me_login
 from currency import CURRENCY_SYMBOLS, DEFAULT_ALERT_THRESHOLDS
 
 # --- CONFIGURATION DE LA PAGE ---
+# Doit rester la toute première commande Streamlit du script : on ne crée le
+# CookieManager (qui rend un composant) qu'après.
 st.set_page_config(
-    page_title="ProBudget AI - Dashboard", 
+    page_title="ProBudget AI - Dashboard",
     page_icon="💰",
-    layout="wide", 
+    layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# Un seul CookieManager par run de script (composant custom réutilisé pour
+# lire/poser/supprimer le cookie "rester connecté").
+cookie_manager = stx.CookieManager(key="cookie_manager")
 
 # --- STYLE CSS PERSONNALISÉ ---
 st.markdown("""
@@ -35,6 +42,13 @@ if 'db' not in st.session_state:
         st.stop()
 db = st.session_state['db']
 
+# --- RECONNEXION AUTOMATIQUE ("RESTER CONNECTÉ") ---
+# Survit aux rechargements de page (retape d'URL, ou rechargement forcé de
+# l'onglet mobile après ouverture de l'appareil photo/sélecteur de fichiers)
+# qui vident st.session_state.
+if 'user' not in st.session_state:
+    try_remember_me_login(db, cookie_manager)
+
 # --- LOGIQUE D'ACCÈS (NON CONNECTÉ) ---
 if 'user' not in st.session_state:
     # On cache le menu latéral si non connecté pour la sécurité
@@ -49,8 +63,9 @@ if 'user' not in st.session_state:
         with st.form("login_form"):
             email_log = st.text_input("Email")
             pass_log = st.text_input("Mot de passe", type="password")
+            remember_me = st.checkbox("Rester connecté sur cet appareil", value=True)
             if st.form_submit_button("Se connecter", use_container_width=True):
-                login(email_log, pass_log, db)
+                login(email_log, pass_log, db, cookie_manager=cookie_manager, remember_me=remember_me)
 
     with tab2:
         with st.form("register_form"):
@@ -118,7 +133,18 @@ else:
                     st.rerun()
 
         st.markdown("---")
-        logout()
+        logout(db, cookie_manager)
+
+        st.markdown("---")
+        st.subheader("☕ Soutenir le projet")
+        if st.button("Faire un don", key="donate_btn", use_container_width=True):
+            db.log_donation_click(st.session_state.get('user', ''))
+            st.success(
+                "Merci ! Envoie ton soutien via Orange Money / Wave au "
+                "[NUMERO_A_REMPLACER]. ⚠️ Ceci n'est pas un paiement automatique : "
+                "c'est juste le numéro à utiliser manuellement dans ton app "
+                "Orange Money ou Wave."
+            )
 
     # --- SÉLECTION DES PAGES ---
     if page == "📊 Tableau de Bord":

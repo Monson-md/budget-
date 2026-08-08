@@ -71,6 +71,21 @@ class DBClient:
             st.error("Erreur lors de la mise à jour du profil.")
             return False
 
+    # --- SOUTIEN DU PROJET ---
+
+    def log_donation_click(self, email):
+        """Enregistre un clic sur le bouton de don (email + horodatage, rien
+        d'autre : on ne connaît ni le montant ni la confirmation du don)."""
+        if not self.db: return False
+        try:
+            self.db.collection('donation_clicks').add({
+                "email": email,
+                "timestamp": firestore.SERVER_TIMESTAMP,
+            })
+            return True
+        except Exception:
+            return False
+
     # --- GESTION BUDGET (OPTIMISÉE) ---
 
     def add_entry(self, collection, entry):

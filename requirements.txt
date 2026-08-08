@@ -13,3 +13,4 @@ pytz
 Pillow
 pytesseract
 requests
+extra-streamlit-components

@@ -1,8 +1,10 @@
 import re
 import secrets
+import hashlib
+import hmac
 import streamlit as st
 import bcrypt
-from datetime import datetime
+from datetime import datetime, timedelta
 from currency import DEFAULT_ALERT_THRESHOLDS
 
 EMAIL_REGEX = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -11,9 +13,84 @@ MAX_LOGIN_ATTEMPTS = 5
 LOCKOUT_DURATION_SECONDS = 5 * 60
 RESET_TOKEN_TTL_SECONDS = 30 * 60
 
+# --- "RESTER CONNECTÉ" (JETON PERSISTANT EN COOKIE) ---
+REMEMBER_COOKIE_NAME = "pb_remember_token"
+REMEMBER_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60  # 30 jours
+
+
+def _hash_remember_token(token):
+    # Un jeton haute entropie (secrets.token_urlsafe) est vérifié à chaque
+    # chargement de page : sha256 suffit ici (contrairement au mot de passe,
+    # pas besoin du ralentissement volontaire de bcrypt).
+    return hashlib.sha256(token.encode('utf-8')).hexdigest()
+
+
+def _issue_remember_me_cookie(email, db, cookie_manager):
+    """Génère un nouveau jeton, stocke son hash+expiration dans Firestore et
+    pose le jeton en clair dans un cookie navigateur."""
+    try:
+        token = secrets.token_urlsafe(32)
+        expires_at_ts = datetime.now().timestamp() + REMEMBER_TOKEN_TTL_SECONDS
+        db.update_user(email, {
+            "remember_token_hash": _hash_remember_token(token),
+            "remember_token_expires": expires_at_ts,
+        })
+        cookie_manager.set(
+            REMEMBER_COOKIE_NAME,
+            f"{email}:{token}",
+            expires_at=datetime.now() + timedelta(seconds=REMEMBER_TOKEN_TTL_SECONDS),
+            key="set_remember_cookie",
+        )
+    except Exception:
+        # Le "rester connecté" est une commodité, pas une fonction critique :
+        # un échec ici ne doit jamais empêcher la connexion elle-même.
+        pass
+
+
+def try_remember_me_login(db, cookie_manager):
+    """Reconnecte automatiquement l'utilisateur si un cookie "rester connecté"
+    valide est présent. Ne fait jamais échouer l'app ni afficher d'erreur :
+    cookie absent, expiré ou invalide => on retombe silencieusement sur
+    l'écran de connexion normal."""
+    try:
+        raw_cookie = cookie_manager.get(cookie=REMEMBER_COOKIE_NAME)
+        if not raw_cookie or ':' not in raw_cookie:
+            return
+
+        email, token = raw_cookie.split(':', 1)
+        email = email.lower().strip()
+
+        user_data = db.get_user(email)
+        if not user_data:
+            return
+
+        stored_hash = user_data.get('remember_token_hash')
+        expires_at = user_data.get('remember_token_expires', 0)
+        if not stored_hash or not expires_at:
+            return
+        if datetime.now().timestamp() > expires_at:
+            return
+        if not hmac.compare_digest(stored_hash, _hash_remember_token(token)):
+            return
+
+        base_currency = user_data.get('base_currency', 'XOF')
+        st.session_state['user'] = email
+        st.session_state['role'] = user_data.get('role', 'user')
+        st.session_state['base_currency'] = base_currency
+        st.session_state['alert_threshold'] = user_data.get(
+            'alert_threshold', DEFAULT_ALERT_THRESHOLDS.get(base_currency, 500)
+        )
+        st.session_state['uid'] = email.replace('.', '_').replace('@', '_at_')
+    except Exception:
+        return
+
 # --- FONCTION DE CONNEXION ---
-def login(email, password, db):
-    """Gère la connexion de l'utilisateur avec validation stricte et blocage anti brute-force."""
+def login(email, password, db, cookie_manager=None, remember_me=False):
+    """Gère la connexion de l'utilisateur avec validation stricte et blocage anti brute-force.
+
+    cookie_manager / remember_me : si un CookieManager est fourni et que
+    l'utilisateur a coché "rester connecté", un jeton persistant est émis
+    après une connexion réussie (voir _issue_remember_me_cookie)."""
     if not email or not password:
         st.error("Veuillez remplir tous les champs.")
         return
@@ -47,6 +124,9 @@ def login(email, password, db):
             )
             # Création d'un UID propre pour les collections Firestore
             st.session_state['uid'] = email.replace('.', '_').replace('@', '_at_')
+
+            if remember_me and cookie_manager is not None:
+                _issue_remember_me_cookie(email, db, cookie_manager)
 
             st.success(f"Bienvenue, {email} !")
             st.rerun()
@@ -170,9 +250,28 @@ def reset_password(email, token, new_password, db):
         return False
 
 # --- FONCTION DE DÉCONNEXION ---
-def logout():
-    """Nettoyage complet de la session."""
+def logout(db=None, cookie_manager=None):
+    """Nettoyage complet de la session, y compris le jeton "rester connecté"
+    (invalidé côté Firestore et supprimé du cookie navigateur)."""
     if st.sidebar.button("Déconnexion", key="logout_btn"):
+        email = st.session_state.get('user')
+
+        if db is not None and email:
+            try:
+                db.update_user(email, {
+                    "remember_token_hash": None,
+                    "remember_token_expires": None,
+                })
+            except Exception:
+                pass
+
+        if cookie_manager is not None:
+            try:
+                if cookie_manager.get(cookie=REMEMBER_COOKIE_NAME):
+                    cookie_manager.delete(REMEMBER_COOKIE_NAME, key="delete_remember_cookie")
+            except Exception:
+                pass
+
         # On vide tout le dictionnaire de session pour la sécurité
         for key in list(st.session_state.keys()):
             del st.session_state[key]
