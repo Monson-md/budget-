@@ -141,7 +141,7 @@ else:
             db.log_donation_click(st.session_state.get('user', ''))
             st.success(
                 "Merci ! Envoie ton soutien via Orange Money / Wave au "
-                "[NUMERO_A_REMPLACER]. ⚠️ Ceci n'est pas un paiement automatique : "
+                "+223 71302389. ⚠️ Ceci n'est pas un paiement automatique : "
                 "c'est juste le numéro à utiliser manuellement dans ton app "
                 "Orange Money ou Wave."
             )
