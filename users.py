@@ -25,6 +25,17 @@ def _hash_remember_token(token):
     return hashlib.sha256(token.encode('utf-8')).hexdigest()
 
 
+def _compute_uid(email):
+    """Identifiant de collection Firestore dérivé de l'email.
+
+    Un hash SHA-256 (plutôt que l'email en clair) évite toute collision entre
+    emails différents et tout conflit avec les contraintes de nommage des
+    collections Firestore (pas de "/", pas de "." ou ".." seul, etc.) : les
+    caractères hexadécimaux sont toujours valides quel que soit le contenu de
+    l'email."""
+    return hashlib.sha256(email.encode('utf-8')).hexdigest()
+
+
 def _issue_remember_me_cookie(email, db, cookie_manager):
     """Génère un nouveau jeton, stocke son hash+expiration dans Firestore et
     pose le jeton en clair dans un cookie navigateur."""
@@ -80,7 +91,7 @@ def try_remember_me_login(db, cookie_manager):
         st.session_state['alert_threshold'] = user_data.get(
             'alert_threshold', DEFAULT_ALERT_THRESHOLDS.get(base_currency, 500)
         )
-        st.session_state['uid'] = email.replace('.', '_').replace('@', '_at_')
+        st.session_state['uid'] = _compute_uid(email)
     except Exception:
         return
 
@@ -123,7 +134,7 @@ def login(email, password, db, cookie_manager=None, remember_me=False):
                 'alert_threshold', DEFAULT_ALERT_THRESHOLDS.get(base_currency, 500)
             )
             # Création d'un UID propre pour les collections Firestore
-            st.session_state['uid'] = email.replace('.', '_').replace('@', '_at_')
+            st.session_state['uid'] = _compute_uid(email)
 
             if remember_me and cookie_manager is not None:
                 _issue_remember_me_cookie(email, db, cookie_manager)
