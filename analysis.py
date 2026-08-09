@@ -1,3 +1,5 @@
+import calendar
+from datetime import date
 import pandas as pd
 import streamlit as st
 
@@ -49,6 +51,39 @@ def prepare_data(entries):
     df['taux_epargne'] = df.index.to_period('M').map(monthly['taux_epargne'].to_dict())
 
     return df
+
+def compute_monthly_budget_status(df, today=None):
+    """Calcule le solde disponible du mois en cours et le budget journalier
+    restant, pour la carte "Combien puis-je dépenser ?".
+
+    Retourne None s'il n'y a aucune transaction ce mois-ci (df vide ou aucune
+    ligne dans le mois courant) : la carte ne doit alors pas s'afficher.
+    """
+    if df.empty:
+        return None
+
+    if today is None:
+        today = date.today()
+
+    df_month = df[(df.index.year == today.year) & (df.index.month == today.month)]
+    if df_month.empty:
+        return None
+
+    # profit par ligne = montant si Revenu, -montant si Dépense (déjà calculé
+    # dans prepare_data) : la somme du mois est donc directement le solde
+    # disponible (revenus du mois - dépenses du mois déjà enregistrées).
+    balance = df_month['profit'].sum()
+
+    last_day = calendar.monthrange(today.year, today.month)[1]
+    month_end = date(today.year, today.month, last_day)
+    days_remaining = (month_end - today).days + 1
+
+    return {
+        "balance": balance,
+        "days_remaining": days_remaining,
+        "daily_budget": balance / days_remaining,
+        "month_end": month_end,
+    }
 
 # En dessous de ce nombre de mois d'historique, une prévision Prophet n'est
 # pas assez fiable pour être présentée comme telle sous "Prévision IA".

@@ -3,7 +3,7 @@ import pandas as pd
 import extra_streamlit_components as stx
 from temp_db_client import DBClient
 from forms import entry_form
-from analysis import prepare_data, forecast_prophet, PROPHET_AVAILABLE
+from analysis import prepare_data, forecast_prophet, compute_monthly_budget_status, PROPHET_AVAILABLE
 from plots import plot_revenue_expense, plot_savings_rate
 # CORRECTION 1 : Importation de export_excel à la place de export_pdf
 from utils import export_csv, export_excel, alert_expense, with_nd_placeholders, EXCHANGE_RATE_TRACE_COLUMNS
@@ -168,6 +168,25 @@ else:
         df = prepare_data(entries)
 
         if not df.empty:
+            # 0. Combien puis-je dépenser ? (calcul direct sur les données du
+            # mois en cours, pas d'IA nécessaire). N'apparaît que s'il y a au
+            # moins une transaction ce mois-ci.
+            budget_status = compute_monthly_budget_status(df)
+            if budget_status is not None:
+                st.subheader("💸 Combien puis-je dépenser ?")
+                if budget_status["balance"] < 0:
+                    st.error(
+                        f"⚠️ Budget du mois dépassé de {abs(budget_status['balance']):,.2f} "
+                        f"{currency_symbol}. Plus de marge de dépense avant le mois prochain."
+                    )
+                else:
+                    st.info(
+                        f"Il te reste **{budget_status['balance']:,.2f} {currency_symbol}**, soit "
+                        f"environ **{budget_status['daily_budget']:,.2f} {currency_symbol}/jour** "
+                        f"jusqu'au {budget_status['month_end'].strftime('%d/%m/%Y')}."
+                    )
+                st.markdown("---")
+
             # 1. Indicateurs Clés
             # La carte "Prévision IA" n'apparaît que si Prophet est disponible ;
             # sinon le reste du tableau de bord continue de fonctionner normalement.
