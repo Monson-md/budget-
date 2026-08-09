@@ -12,3 +12,4 @@ Pillow
 pytesseract
 requests
 extra-streamlit-components
+pytest

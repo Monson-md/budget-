@@ -28,3 +28,6 @@ jobs:
 
       - name: Test d'import individuel des modules non-entrypoint
         run: python .github/scripts/check_imports.py
+
+      - name: Tests unitaires (pytest)
+        run: pytest tests/ -v

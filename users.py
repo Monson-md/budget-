@@ -2,6 +2,8 @@ import re
 import secrets
 import hashlib
 import hmac
+import smtplib
+from email.message import EmailMessage
 import streamlit as st
 import bcrypt
 from datetime import datetime, timedelta
@@ -234,15 +236,56 @@ def register(email, password, db, role="user", base_currency="XOF"):
     return False
 
 # --- FONCTION DE RÉINITIALISATION DE MOT DE PASSE ---
-def request_password_reset(email, db):
-    """Génère un token de réinitialisation temporaire stocké dans Firestore.
 
-    Aucun service d'email n'est configuré pour l'instant : le token n'est
-    jamais renvoyé à l'appelant de ce formulaire (afficher le token à qui le
-    demande permettrait à n'importe qui connaissant l'email d'une victime de
-    réinitialiser son mot de passe). Il doit être récupéré manuellement dans
-    la console Firestore (document users/<email>, champ reset_token) puis
-    transmis à l'utilisateur par un canal de confiance (SMS, WhatsApp, etc.).
+def _send_reset_email(email, token):
+    """Envoie le code de réinitialisation par email via SMTP, configuré dans
+    st.secrets["smtp"] (jamais codé en dur). Retourne True si l'email a bien
+    été envoyé, False sinon (secrets SMTP absents ou incomplets, erreur
+    réseau/authentification...) : l'appelant retombe alors sur le flux manuel
+    existant (récupération du code dans la console Firestore) sans planter."""
+    try:
+        smtp_config = st.secrets["smtp"]
+    except (KeyError, FileNotFoundError):
+        return False
+
+    required_keys = ("host", "port", "username", "password", "sender")
+    if not all(k in smtp_config for k in required_keys):
+        return False
+
+    try:
+        msg = EmailMessage()
+        msg["Subject"] = "ProBudget AI - Réinitialisation de votre mot de passe"
+        msg["From"] = smtp_config["sender"]
+        msg["To"] = email
+        msg.set_content(
+            "Voici ton code de réinitialisation ProBudget AI :\n\n"
+            f"{token}\n\n"
+            f"Ce code expire dans {RESET_TOKEN_TTL_SECONDS // 60} minutes. "
+            "Si tu n'es pas à l'origine de cette demande, ignore cet email."
+        )
+
+        with smtplib.SMTP(smtp_config["host"], int(smtp_config["port"]), timeout=10) as server:
+            if smtp_config.get("use_tls", True):
+                server.starttls()
+            server.login(smtp_config["username"], smtp_config["password"])
+            server.send_message(msg)
+        return True
+    except Exception:
+        return False
+
+
+def request_password_reset(email, db):
+    """Génère un token de réinitialisation temporaire stocké dans Firestore et
+    tente de l'envoyer automatiquement par email (voir _send_reset_email).
+
+    Si les secrets SMTP sont absents, incomplets, ou si l'envoi échoue, on
+    retombe proprement sur le comportement manuel existant : le token doit
+    être récupéré dans la console Firestore (document users/<email>, champ
+    reset_token) et transmis à l'utilisateur par un canal de confiance.
+
+    Le message affiché ne varie jamais selon que le compte existe ou que
+    l'email a réellement été envoyé, pour ne pas laisser un attaquant déduire
+    quels comptes existent à partir de la réponse.
     """
     if not email:
         st.error("Veuillez indiquer votre email.")
@@ -256,11 +299,15 @@ def request_password_reset(email, db):
             token = secrets.token_urlsafe(24)
             expires_at = datetime.now().timestamp() + RESET_TOKEN_TTL_SECONDS
             db.update_user(email, {"reset_token": token, "reset_token_expires": expires_at})
+            _send_reset_email(email, token)
     except Exception:
         pass
 
-    # Message générique dans tous les cas, pour ne pas révéler si l'email existe.
-    st.info("Si ce compte existe, une demande de réinitialisation a été enregistrée. Contactez l'administrateur pour récupérer votre code temporaire.")
+    st.info(
+        "Si ce compte existe, un code de réinitialisation vient d'être généré. "
+        "Il te sera transmis automatiquement par email si l'envoi est configuré ; "
+        "sinon, contacte l'administrateur pour le récupérer."
+    )
 
 def reset_password(email, token, new_password, db):
     """Réinitialise le mot de passe si le token fourni est valide et non expiré."""
