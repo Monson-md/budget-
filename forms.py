@@ -16,6 +16,25 @@ if os.path.exists(windows_tesseract_path):
 # Firestore avec des tickets entiers à chaque transaction.
 MAX_OCR_TEXT_LENGTH = 500
 
+# Mots-clés qui, présents sur une ligne, disqualifient celle-ci comme montant
+# total même si elle contient aussi "total" (ex: "Sous-total") ou un autre
+# mot-clé de montant : ce sont des montants intermédiaires ou annexes, jamais
+# le total réellement dû. Variantes non accentuées incluses pour tolérer les
+# fautes d'OCR sur les accents.
+EXCLUDED_AMOUNT_KEYWORDS = [
+    'espèces', 'especes',
+    'monnaie',
+    'rendu',
+    'reçu', 'recu',
+    'sous-total', 'sous total',
+    'tva',
+    'acompte',
+]
+
+def _line_has_excluded_keyword(line):
+    lower = line.lower()
+    return any(keyword in lower for keyword in EXCLUDED_AMOUNT_KEYWORDS)
+
 def extract_amount_from_text(text):
     """Analyse le texte du ticket pour trouver le montant total.
 
@@ -23,6 +42,12 @@ def extract_amount_from_text(text):
     - FCFA/entier : "7 220", "1 101" (chiffres groupés par des espaces,
       sans décimales)
     - EUR/décimal : "12,34", "12.34" (virgule ou point suivi de 2 décimales)
+
+    Sur les tickets à montants multiples (sous-total, TVA, total, espèces
+    données, monnaie rendue...), seule une ligne contenant "total" ou
+    "à payer" ET ne contenant aucun mot-clé de EXCLUDED_AMOUNT_KEYWORDS est
+    retenue comme candidate ; s'il y en a plusieurs, la dernière du ticket
+    l'emporte (le total final vient généralement après le sous-total).
     """
     if not text:
         return 0.0
@@ -30,29 +55,58 @@ def extract_amount_from_text(text):
     # Chiffres éventuellement groupés par des espaces (séparateur de
     # milliers FCFA), suivis en option d'une partie décimale (format EUR).
     number = r'(\d[\d\s]*\d|\d)(?:[.,](\d{2}))?'
+    number_re = re.compile(number)
 
+    def _parse_amount(int_part, dec_part):
+        # Nettoyage des espaces (classiques et insécables) utilisés comme
+        # séparateur de milliers, sans toucher à la décimale capturée
+        # séparément dans dec_part.
+        montant_str = int_part.replace(' ', '').replace('\xa0', '')
+        if dec_part:
+            montant_str += f'.{dec_part}'
+        try:
+            return float(montant_str)
+        except ValueError:
+            return None
+
+    lines = text.splitlines()
+
+    # 1. Priorité stricte : dernière ligne contenant "total" ou "à payer",
+    # sans mot-clé exclu.
+    total_keyword_re = re.compile(r'total|à\s*payer', re.IGNORECASE)
+    last_total_amount = None
+    for line in lines:
+        if not total_keyword_re.search(line) or _line_has_excluded_keyword(line):
+            continue
+        match = number_re.search(line)
+        if match:
+            amount = _parse_amount(match.group(1), match.group(2))
+            if amount is not None:
+                last_total_amount = amount
+    if last_total_amount is not None:
+        return last_total_amount
+
+    # 2. Repli : mots-clés de montant plus larges (net, montant, ttc), puis
+    # montant directement suivi d'un symbole/code de devise. Toujours en
+    # ignorant les lignes contenant un mot-clé exclu, et en gardant la
+    # dernière occurrence trouvée dans le ticket.
     patterns = [
-        # Priorité : montant situé juste après un mot-clé de total. Le
-        # séparateur exclut explicitement les retours à la ligne pour ne
-        # pas "sauter" sur une autre ligne du ticket (ex: la ligne TVA).
-        r'(?:total|net|à\s*payer|payer|montant|ttc)[^\d\n]*' + number,
-        # Repli : montant directement suivi d'un symbole/code de devise.
+        r'(?:net|montant|ttc)[^\d\n]*' + number,
         number + r'\s*(?:€|eur|xof|cfa|fcfa)',
     ]
     for pattern in patterns:
-        matches = re.findall(pattern, text, re.IGNORECASE)
-        if matches:
-            int_part, dec_part = matches[-1]
-            # Nettoyage des espaces (classiques et insécables) utilisés
-            # comme séparateur de milliers, sans toucher à la décimale
-            # capturée séparément dans dec_part.
-            montant_str = int_part.replace(' ', '').replace('\xa0', '')
-            if dec_part:
-                montant_str += f'.{dec_part}'
-            try:
-                return float(montant_str)
-            except ValueError:
+        pattern_re = re.compile(pattern, re.IGNORECASE)
+        last_amount = None
+        for line in lines:
+            if _line_has_excluded_keyword(line):
                 continue
+            for match in pattern_re.finditer(line):
+                amount = _parse_amount(match.group(1), match.group(2))
+                if amount is not None:
+                    last_amount = amount
+        if last_amount is not None:
+            return last_amount
+
     return 0.0
 
 def entry_form(base_currency="XOF"):
