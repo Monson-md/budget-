@@ -6,7 +6,7 @@ from forms import entry_form
 from analysis import prepare_data, forecast_prophet, PROPHET_AVAILABLE
 from plots import plot_revenue_expense, plot_profit_margin
 # CORRECTION 1 : Importation de export_excel à la place de export_pdf
-from utils import export_csv, export_excel, alert_expense
+from utils import export_csv, export_excel, alert_expense, with_nd_placeholders, EXCHANGE_RATE_TRACE_COLUMNS
 from users import login, register, logout, request_password_reset, reset_password, try_remember_me_login
 from currency import CURRENCY_SYMBOLS, DEFAULT_ALERT_THRESHOLDS
 
@@ -202,8 +202,10 @@ else:
             alert_expense(df, st.session_state.get('alert_threshold'), base_currency)
             
             with st.expander("📂 Voir l'historique complet des transactions"):
-                # Tri de l'affichage par index décroissant pour voir les plus récents en premier
-                st.dataframe(df.sort_index(ascending=False), use_container_width=True)
+                # Tri de l'affichage par index décroissant pour voir les plus récents en premier.
+                # "n/d" pour le taux de change sur les transactions créées avant son ajout.
+                df_historique = with_nd_placeholders(df, EXCHANGE_RATE_TRACE_COLUMNS)
+                st.dataframe(df_historique.sort_index(ascending=False), use_container_width=True)
             
             # 4. Modules d'Export
             st.markdown("---")

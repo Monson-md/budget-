@@ -44,13 +44,17 @@ def format_amount(amount, currency="XOF"):
     return f"{amount:,.2f} {symbol}"
 
 @st.cache_data(ttl=3600)
-def get_exchange_rate(from_currency, to_currency="XOF"):
+def get_exchange_rate_with_source(from_currency, to_currency="XOF"):
     """
-    Récupère le taux de change en direct depuis une API gratuite.
+    Récupère le taux de change en direct depuis une API gratuite, avec sa
+    source ("api" ou "fallback") : sert à tracer, sur chaque transaction,
+    si le taux vient réellement de l'API ou de la table de secours.
     Si l'API est indisponible ou corrompue, utilise des taux de secours.
     """
     if from_currency == to_currency:
-        return 1.0
+        # Conversion identité (même devise) : ni appel API ni valeur de
+        # secours, le taux 1.0 est exact par définition -> traité comme "api".
+        return 1.0, "api"
 
     try:
         url = f"https://open.er-api.com/v6/latest/{from_currency}"
@@ -59,13 +63,18 @@ def get_exchange_rate(from_currency, to_currency="XOF"):
 
         if response.status_code == 200 and "rates" in data:
             if to_currency in data["rates"]:
-                return data["rates"][to_currency]
+                return data["rates"][to_currency], "api"
     except Exception:
         # En cas de timeout ou coupure internet, on passe silencieusement au plan B
         pass
 
     # Si on arrive ici, c'est que l'API a échoué ou est incomplète -> Plan B automatique
-    return _fallback_rate(from_currency, to_currency)
+    return _fallback_rate(from_currency, to_currency), "fallback"
+
+def get_exchange_rate(from_currency, to_currency="XOF"):
+    """Compatibilité : renvoie uniquement le taux, sans sa source."""
+    rate, _source = get_exchange_rate_with_source(from_currency, to_currency)
+    return rate
 
 def convert_amount(amount, from_currency, to_currency="XOF"):
     """Convertit un montant d'une devise vers une autre."""

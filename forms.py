@@ -1,11 +1,11 @@
 import streamlit as st
-from datetime import date
+from datetime import date, datetime
 import pytesseract
 from PIL import Image
 import re
 import os
 # IMPORTATION DU MODULE QUE TU AS CRÉÉ
-from currency import get_exchange_rate
+from currency import get_exchange_rate_with_source
 
 # Gestion automatique du chemin Tesseract (Local Windows vs Serveur Linux)
 windows_tesseract_path = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
@@ -124,8 +124,10 @@ def entry_form(base_currency="XOF"):
         submitted = st.form_submit_button("🚀 Enregistrer", use_container_width=True)
 
         if submitted:
-            # Conversion automatique vers la devise de référence du profil
-            taux = get_exchange_rate(devise, base_currency)
+            # Conversion automatique vers la devise de référence du profil.
+            # On garde aussi le taux, sa source (api/fallback) et la date de
+            # conversion, pour pouvoir expliquer plus tard un montant converti.
+            taux, taux_source = get_exchange_rate_with_source(devise, base_currency)
             montant_converti = round(montant_saisi * taux, 2)
 
             file_name = uploaded_file.name if uploaded_file else "Aucun justificatif"
@@ -141,6 +143,9 @@ def entry_form(base_currency="XOF"):
                 "currency_original": devise,
                 "amount": montant_converti,
                 "currency_pivot": base_currency,
+                "exchange_rate": taux,
+                "exchange_rate_source": taux_source,
+                "exchange_rate_date": datetime.now().isoformat(),
                 "category": categorie,
                 "date": date_entry.isoformat(),
                 "description": description,

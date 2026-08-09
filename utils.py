@@ -3,13 +3,31 @@ import pandas as pd
 import io
 from currency import CURRENCY_SYMBOLS, DEFAULT_ALERT_THRESHOLDS
 
+# Colonnes de traçabilité du taux de change, ajoutées aux transactions à
+# partir de ce changement. Les transactions créées avant ne les ont pas.
+EXCHANGE_RATE_TRACE_COLUMNS = ["exchange_rate", "exchange_rate_source", "exchange_rate_date"]
+
+def with_nd_placeholders(df, columns):
+    """Copie de df où les valeurs manquantes des colonnes indiquées
+    affichent "n/d" plutôt qu'une cellule vide/NaN. Sert à afficher/exporter
+    proprement les anciennes transactions qui n'ont pas ces colonnes, sans
+    migration de données."""
+    df = df.copy()
+    for col in columns:
+        if col not in df.columns:
+            df[col] = "n/d"
+        else:
+            df[col] = df[col].apply(lambda v: "n/d" if pd.isna(v) else v)
+    return df
+
 def export_csv(df, base_currency="XOF"):
     """Bouton d'exportation CSV natif Streamlit (plus rapide)."""
     if df.empty:
         st.warning("Aucune donnée à exporter en CSV.")
         return
 
-    df_export = df.rename(columns={
+    df_export = with_nd_placeholders(df, EXCHANGE_RATE_TRACE_COLUMNS)
+    df_export = df_export.rename(columns={
         "amount": f"amount_{base_currency}",
         "profit": f"profit_{base_currency}",
     })
@@ -31,7 +49,7 @@ def export_excel(df, base_currency="XOF"):  # RENOMMÉ : Plus logique que export
     output = io.BytesIO()
 
     # CORRECTION CRITIQUE : Copie du DataFrame et retrait des timezones
-    df_clean = df.copy()
+    df_clean = with_nd_placeholders(df, EXCHANGE_RATE_TRACE_COLUMNS)
     if isinstance(df_clean.index, pd.DatetimeIndex):
         df_clean.index = df_clean.index.tz_localize(None)
 
