@@ -223,5 +223,8 @@ else:
         try:
             from investments import investment_dashboard
             investment_dashboard(db, st.session_state['uid'], base_currency)
-        except ImportError:
-            st.error("Le fichier 'investments.py' est manquant ou contient une erreur de syntaxe.")
+        except Exception:
+            # On capture toute exception (pas seulement ImportError) : une
+            # erreur de syntaxe ou une erreur runtime dans investments.py ne
+            # doit jamais afficher de traceback brut à l'écran.
+            st.error("Le module 'Investissements' est indisponible pour le moment (fichier manquant ou en erreur).")

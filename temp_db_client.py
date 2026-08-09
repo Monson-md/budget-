@@ -1,5 +1,5 @@
 import firebase_admin
-from firebase_admin import credentials, firestore, auth
+from firebase_admin import credentials, firestore
 import streamlit as st
 
 class DBClient:
@@ -96,8 +96,8 @@ class DBClient:
             entry['server_timestamp'] = firestore.SERVER_TIMESTAMP
             self.db.collection(collection).add(entry)
             return True
-        except Exception as e:
-            st.error(f"Erreur d'ajout : {e}")
+        except Exception:
+            st.error("Erreur lors de l'ajout de l'opération.")
             return False
 
     def get_entries(self, collection):
@@ -109,5 +109,9 @@ class DBClient:
             return [{**doc.to_dict(), 'id': doc.id} for doc in docs]
         except Exception:
             # Si le tri échoue (ex: pas de timestamp sur les vieilles entrées), on récupère tout sans tri
-            docs = self.db.collection(collection).stream()
-            return [{**doc.to_dict(), 'id': doc.id} for doc in docs]
+            try:
+                docs = self.db.collection(collection).stream()
+                return [{**doc.to_dict(), 'id': doc.id} for doc in docs]
+            except Exception:
+                st.error("Erreur lors de la récupération des transactions.")
+                return []

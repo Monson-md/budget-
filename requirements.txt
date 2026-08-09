@@ -5,9 +5,7 @@ plotly
 firebase-admin
 bcrypt
 prophet
-matplotlib
 openpyxl
-xlrd
 python-dateutil
 pytz
 Pillow

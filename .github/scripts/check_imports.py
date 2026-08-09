@@ -24,6 +24,7 @@ MODULES_TO_CHECK = [
     "utils",
     "analysis",
     "forms",
+    "investments",
 ]
 
 def main():

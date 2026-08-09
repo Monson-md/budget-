@@ -16,7 +16,16 @@ def prepare_data(entries):
         return pd.DataFrame()
 
     df = pd.DataFrame(entries)
-    
+
+    # Des documents Firestore incomplets (saisis avant un changement de schéma,
+    # ou corrompus) ne doivent pas planter tout le dashboard avec un KeyError.
+    if 'date' not in df.columns:
+        df['date'] = pd.Timestamp.now()
+    if 'type' not in df.columns:
+        df['type'] = 'Dépense'
+    if 'amount' not in df.columns:
+        df['amount'] = 0
+
     df['date'] = pd.to_datetime(df['date'])
     df['amount'] = pd.to_numeric(df['amount'], errors='coerce').fillna(0)
     

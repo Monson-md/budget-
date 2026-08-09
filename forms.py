@@ -98,8 +98,8 @@ def entry_form(base_currency="XOF"):
                     st.sidebar.success(f"🎯 Montant détecté : {detected_amount:.2f} {devise_affichage}")
                 else:
                     st.sidebar.warning("Ticket lu, mais aucun montant détecté automatiquement.")
-            except Exception as e:
-                st.sidebar.error(f"Erreur OCR : {e}")
+            except Exception:
+                st.sidebar.error("Erreur lors de la lecture du ticket (OCR).")
 
     # 2. Le Formulaire de Saisie standard
     st.sidebar.markdown("### 📝 Détails de l'opération")
