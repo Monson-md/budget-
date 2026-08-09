@@ -34,39 +34,73 @@ def prepare_data(entries):
     
     df = df.set_index('date').sort_index()
     
-    # Agrégation mensuelle pour le calcul exact des marges
-    monthly = df.resample('ME').agg({'profit': 'sum'}) 
+    # Agrégation mensuelle pour le calcul exact du taux d'épargne
+    monthly = df.resample('ME').agg({'profit': 'sum'})
     monthly['rev_total'] = df[df['type'] == 'Revenu'].resample('ME')['amount'].sum().fillna(0)
-    
-    # Calcul de la marge mensuelle réelle
-    monthly['marge'] = (monthly['profit'] / monthly['rev_total']) * 100
-    monthly['marge'] = monthly['marge'].replace([float('inf'), -float('inf')], 0).fillna(0)
-    
+
+    # Taux d'épargne mensuel réel : (revenus - dépenses) / revenus * 100.
+    # monthly['profit'] vaut déjà (revenus - dépenses) du mois (profit par
+    # ligne = montant si Revenu, -montant si Dépense), donc la formule est
+    # directement profit / rev_total * 100.
+    monthly['taux_epargne'] = (monthly['profit'] / monthly['rev_total']) * 100
+    monthly['taux_epargne'] = monthly['taux_epargne'].replace([float('inf'), -float('inf')], 0).fillna(0)
+
     # Cartographie propre sur l'index
-    df['marge'] = df.index.to_period('M').map(monthly['marge'].to_dict())
-    
+    df['taux_epargne'] = df.index.to_period('M').map(monthly['taux_epargne'].to_dict())
+
     return df
+
+# En dessous de ce nombre de mois d'historique, une prévision Prophet n'est
+# pas assez fiable pour être présentée comme telle sous "Prévision IA".
+FORECAST_MIN_MONTHS = 3
+
+
+def _forecast_label(months_used):
+    """Libellé reflétant la fiabilité de la prévision selon l'historique disponible."""
+    if months_used < 6:
+        return "Estimation expérimentale"
+    if months_used < 12:
+        return "Prévision"
+    return "Prévision (historique suffisant)"
+
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def forecast_prophet(df):
-    """Prédit le profit du mois prochain. Retourne None si indisponible."""
+    """Prédit le profit du mois prochain, avec une fourchette (yhat_lower/yhat_upper)
+    plutôt qu'un chiffre unique.
+
+    Retourne toujours un dict avec au moins "available" et "months_used" :
+    - available=False, months_used<FORECAST_MIN_MONTHS : pas assez d'historique.
+    - available=False, months_used>=FORECAST_MIN_MONTHS : Prophet indisponible
+      ou échec du calcul (binaire cmdstan manquant, etc.).
+    - available=True : yhat/yhat_lower/yhat_upper/label présents.
+    """
     if not PROPHET_AVAILABLE or df.empty:
-        return None
+        return {"available": False, "months_used": 0}
 
     ts = df['profit'].resample('ME').sum().reset_index()
     ts.columns = ['ds', 'y']
-    
-    if len(ts) < 2: 
-        return None
+    months_used = len(ts)
+
+    if months_used < FORECAST_MIN_MONTHS:
+        return {"available": False, "months_used": months_used}
 
     try:
         ts['ds'] = ts['ds'].dt.tz_localize(None)
         m = Prophet(interval_width=0.95, daily_seasonality=False, weekly_seasonality=False, yearly_seasonality=False)
         m.fit(ts)
-        
+
         future = m.make_future_dataframe(periods=1, freq='ME')
         forecast = m.predict(future)
-        
-        return forecast['yhat'].iloc[-1]
+        last = forecast.iloc[-1]
+
+        return {
+            "available": True,
+            "months_used": months_used,
+            "label": _forecast_label(months_used),
+            "yhat": last['yhat'],
+            "yhat_lower": last['yhat_lower'],
+            "yhat_upper": last['yhat_upper'],
+        }
     except Exception:
-        return None
+        return {"available": False, "months_used": months_used}

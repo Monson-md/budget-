@@ -26,21 +26,21 @@ def plot_revenue_expense(df, base_currency="XOF"):
     fig.update_layout(xaxis_title="", yaxis_title=f"Montant ({symbol})", legend_title="")
     return fig
 
-def plot_profit_margin(df):
-    """Trace la marge bénéficiaire (%) à partir des données calculées."""
+def plot_savings_rate(df):
+    """Trace le taux d'épargne ((revenus - dépenses) / revenus, en %) à partir des données calculées."""
     if df.empty:
         return px.scatter(title="Aucune donnée pour le graphique")
 
-    # On récupère la marge moyenne par fin de mois depuis l'index
-    monthly_margin = df.resample('ME')['marge'].mean().to_frame()
-    monthly_margin['month'] = monthly_margin.index.strftime('%b %Y')
+    # On récupère le taux d'épargne moyen par fin de mois depuis l'index
+    monthly_savings = df.resample('ME')['taux_epargne'].mean().to_frame()
+    monthly_savings['month'] = monthly_savings.index.strftime('%b %Y')
 
     fig = px.line(
-        monthly_margin, x='month', y='marge',
-        title='📈 Évolution de la Marge (%)',
+        monthly_savings, x='month', y='taux_epargne',
+        title="📈 Évolution du Taux d'Épargne (%)",
         markers=True,
         template="plotly_white"
     )
     fig.update_traces(line_color='#3498db', line_width=3)
-    fig.update_layout(yaxis_range=[-100, 100], xaxis_title="", yaxis_title="Marge %")
+    fig.update_layout(yaxis_range=[-100, 100], xaxis_title="", yaxis_title="Taux d'épargne %")
     return fig

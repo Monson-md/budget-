@@ -4,7 +4,7 @@ import extra_streamlit_components as stx
 from temp_db_client import DBClient
 from forms import entry_form
 from analysis import prepare_data, forecast_prophet, PROPHET_AVAILABLE
-from plots import plot_revenue_expense, plot_profit_margin
+from plots import plot_revenue_expense, plot_savings_rate
 # CORRECTION 1 : Importation de export_excel à la place de export_pdf
 from utils import export_csv, export_excel, alert_expense, with_nd_placeholders, EXCHANGE_RATE_TRACE_COLUMNS
 from users import login, register, logout, request_password_reset, reset_password, try_remember_me_login
@@ -177,16 +177,26 @@ else:
                 st.metric(f"Profit Total (Pivot {base_currency})", f"{df['profit'].sum():,.2f} {currency_symbol}", delta=None)
             with col2:
                 # Éviter l'affichage de 'nan %' s'il n'y a pas encore assez de données de revenus
-                marge_moyenne = df['marge'].mean()
-                marge_txt = f"{marge_moyenne:.1f} %" if not pd.isna(marge_moyenne) else "0.0 %"
-                st.metric("Marge Moyenne", marge_txt)
+                taux_epargne_moyen = df['taux_epargne'].mean()
+                taux_epargne_txt = f"{taux_epargne_moyen:.1f} %" if not pd.isna(taux_epargne_moyen) else "0.0 %"
+                st.metric("Taux d'Épargne Moyen", taux_epargne_txt)
 
             if PROPHET_AVAILABLE:
                 with cols[2]:
                     with st.spinner("Calcul de la prévision IA..."):
                         forecast = forecast_prophet(df)
-                    if forecast is not None:
-                        st.metric("Prévision IA (M+1)", f"{forecast:,.2f} {currency_symbol}")
+                    if forecast["available"]:
+                        st.metric(
+                            f"{forecast['label']} (M+1)",
+                            f"{forecast['yhat']:,.2f} {currency_symbol}",
+                        )
+                        st.caption(
+                            f"Fourchette (95%) : {forecast['yhat_lower']:,.2f} – "
+                            f"{forecast['yhat_upper']:,.2f} {currency_symbol}"
+                        )
+                    elif forecast["months_used"] < 3:
+                        st.metric("Prévision IA (M+1)", "Indisponible")
+                        st.caption("Prévision indisponible (min. 3 mois de données)")
                     else:
                         st.metric("Prévision IA (M+1)", "Indisponible")
 
@@ -196,7 +206,7 @@ else:
             with c1:
                 st.plotly_chart(plot_revenue_expense(df, base_currency), use_container_width=True)
             with c2:
-                st.plotly_chart(plot_profit_margin(df), use_container_width=True)
+                st.plotly_chart(plot_savings_rate(df), use_container_width=True)
 
             # 3. Alertes et Historique
             alert_expense(df, st.session_state.get('alert_threshold'), base_currency)
