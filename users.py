@@ -37,24 +37,41 @@ def _compute_uid(email):
 
 
 def _issue_remember_me_cookie(email, db, cookie_manager):
-    """Génère un nouveau jeton, stocke son hash+expiration dans Firestore et
-    pose le jeton en clair dans un cookie navigateur."""
+    """Génère un nouveau jeton, l'enregistre comme un nouveau document d'appareil
+    dans users/<email>/remember_tokens/<tokenId> et pose le jeton en clair dans
+    un cookie navigateur. Un document par appareil : se connecter sur un
+    nouvel appareil ne déconnecte pas les autres."""
     try:
         token = secrets.token_urlsafe(32)
-        expires_at_ts = datetime.now().timestamp() + REMEMBER_TOKEN_TTL_SECONDS
-        db.update_user(email, {
-            "remember_token_hash": _hash_remember_token(token),
-            "remember_token_expires": expires_at_ts,
+        token_id = _hash_remember_token(token)
+        now = datetime.now()
+        db.set_remember_token(email, token_id, {
+            "hash": token_id,
+            "created_at": now.timestamp(),
+            "expires_at": now.timestamp() + REMEMBER_TOKEN_TTL_SECONDS,
         })
         cookie_manager.set(
             REMEMBER_COOKIE_NAME,
             f"{email}:{token}",
-            expires_at=datetime.now() + timedelta(seconds=REMEMBER_TOKEN_TTL_SECONDS),
+            expires_at=now + timedelta(seconds=REMEMBER_TOKEN_TTL_SECONDS),
             key="set_remember_cookie",
         )
     except Exception:
         # Le "rester connecté" est une commodité, pas une fonction critique :
         # un échec ici ne doit jamais empêcher la connexion elle-même.
+        pass
+
+
+def _purge_expired_remember_tokens(email, db):
+    """Supprime les jetons "rester connecté" expirés d'un utilisateur, pour ne
+    pas accumuler indéfiniment de documents dans la sous-collection. Best
+    effort : appelé à l'occasion d'une connexion réussie, jamais bloquant."""
+    try:
+        now_ts = datetime.now().timestamp()
+        for token_doc in db.list_remember_tokens(email):
+            if token_doc.get('expires_at', 0) < now_ts:
+                db.delete_remember_token(email, token_doc['id'])
+    except Exception:
         pass
 
 
@@ -75,13 +92,25 @@ def try_remember_me_login(db, cookie_manager):
         if not user_data:
             return
 
-        stored_hash = user_data.get('remember_token_hash')
-        expires_at = user_data.get('remember_token_expires', 0)
+        # Un compte verrouillé (échecs de connexion répétés) ne doit pas rester
+        # accessible via un cookie émis avant le verrouillage : sinon le
+        # lockout ne protège que le formulaire de connexion, pas le compte.
+        locked_until = user_data.get('locked_until')
+        if locked_until and datetime.now().timestamp() < locked_until:
+            return
+
+        token_id = _hash_remember_token(token)
+        token_data = db.get_remember_token(email, token_id)
+        if not token_data:
+            return
+
+        stored_hash = token_data.get('hash')
+        expires_at = token_data.get('expires_at', 0)
         if not stored_hash or not expires_at:
             return
         if datetime.now().timestamp() > expires_at:
             return
-        if not hmac.compare_digest(stored_hash, _hash_remember_token(token)):
+        if not hmac.compare_digest(stored_hash, token_id):
             return
 
         base_currency = user_data.get('base_currency', 'XOF')
@@ -124,6 +153,10 @@ def login(email, password, db, cookie_manager=None, remember_me=False):
         if user_data and bcrypt.checkpw(password.encode('utf-8'), user_data.get('password_hash', '').encode('utf-8')):
             if user_data.get('failed_attempts'):
                 db.update_user(email, {"failed_attempts": 0, "locked_until": None})
+
+            # Entretien opportuniste : purge les jetons "rester connecté"
+            # expirés de ce compte à chaque connexion réussie.
+            _purge_expired_remember_tokens(email, db)
 
             base_currency = user_data.get('base_currency', 'XOF')
 
@@ -262,17 +295,18 @@ def reset_password(email, token, new_password, db):
 
 # --- FONCTION DE DÉCONNEXION ---
 def logout(db=None, cookie_manager=None):
-    """Nettoyage complet de la session, y compris le jeton "rester connecté"
-    (invalidé côté Firestore et supprimé du cookie navigateur)."""
+    """Nettoyage complet de la session. N'invalide que le jeton "rester
+    connecté" de l'appareil courant (lu depuis son propre cookie) : les autres
+    appareils connectés avec le même compte restent connectés."""
     if st.sidebar.button("Déconnexion", key="logout_btn"):
         email = st.session_state.get('user')
 
-        if db is not None and email:
+        if db is not None and email and cookie_manager is not None:
             try:
-                db.update_user(email, {
-                    "remember_token_hash": None,
-                    "remember_token_expires": None,
-                })
+                raw_cookie = cookie_manager.get(cookie=REMEMBER_COOKIE_NAME)
+                if raw_cookie and ':' in raw_cookie:
+                    _, token = raw_cookie.split(':', 1)
+                    db.delete_remember_token(email, _hash_remember_token(token))
             except Exception:
                 pass
 

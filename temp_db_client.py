@@ -71,6 +71,52 @@ class DBClient:
             st.error("Erreur lors de la mise à jour du profil.")
             return False
 
+    # --- "RESTER CONNECTÉ" (UN JETON PAR APPAREIL) ---
+    # Sous-collection users/<email>/remember_tokens/<tokenId> : un document par
+    # appareil connecté, pour qu'une connexion sur un nouvel appareil ne
+    # déconnecte pas silencieusement les autres, et qu'une déconnexion
+    # n'invalide que l'appareil courant.
+
+    def set_remember_token(self, email, token_id, data):
+        """Crée/écrase le document d'un jeton "rester connecté" (un par appareil)."""
+        if not self.db: return False
+        try:
+            (self.db.collection('users').document(email.lower())
+                .collection('remember_tokens').document(token_id).set(data))
+            return True
+        except Exception:
+            return False
+
+    def get_remember_token(self, email, token_id):
+        """Récupère le document d'un jeton "rester connecté" précis."""
+        if not self.db: return None
+        try:
+            doc = (self.db.collection('users').document(email.lower())
+                .collection('remember_tokens').document(token_id).get())
+            return doc.to_dict() if doc.exists else None
+        except Exception:
+            return None
+
+    def delete_remember_token(self, email, token_id):
+        """Invalide le jeton "rester connecté" d'un seul appareil (les autres restent valides)."""
+        if not self.db: return False
+        try:
+            (self.db.collection('users').document(email.lower())
+                .collection('remember_tokens').document(token_id).delete())
+            return True
+        except Exception:
+            return False
+
+    def list_remember_tokens(self, email):
+        """Liste tous les jetons "rester connecté" actifs (tous appareils) pour un utilisateur."""
+        if not self.db: return []
+        try:
+            docs = (self.db.collection('users').document(email.lower())
+                .collection('remember_tokens').stream())
+            return [{**doc.to_dict(), 'id': doc.id} for doc in docs]
+        except Exception:
+            return []
+
     # --- SOUTIEN DU PROJET ---
 
     def log_donation_click(self, email):
